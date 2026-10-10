@@ -15,20 +15,20 @@ jobs:
       - name: Build exe
         shell: pwsh
         run: |
-          $opts = @('--onefile', '--noconsole', '--name', 'AlertingClient')
+          $iconPath = Join-Path (Get-Location) 'combined_icon.ico'
           
-          # Combine multiple sizes into a single proper multi-res .ico for PyInstaller
+          # Combine multiple sizes into a proper multi-res .ico with an absolute path
           if ((Test-Path 'icon_16x16.ico') -and (Test-Path 'icon_32x32.ico') -and (Test-Path 'icon_48x48.ico')) {
             python -c "
             from PIL import Image
             img16 = Image.open('icon_16x16.ico')
             img32 = Image.open('icon_32x32.ico')
             img48 = Image.open('icon_48x48.ico')
-            img48.save('combined_icon.ico', format='ICO', append_images=[img32, img16])
+            img48.save(r'$iconPath', format='ICO', append_images=[img32, img16])
             "
-            $opts += @('--icon', 'combined_icon.ico')
           }
           
+          $opts = @('--onefile', '--noconsole', '--name', 'AlertingClient', '--icon', $iconPath)
           pyinstaller @opts alerting_client.py
       - uses: actions/upload-artifact@v4
         with:
