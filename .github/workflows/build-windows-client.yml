@@ -2,7 +2,7 @@ name: Build Windows client
 on:
   workflow_dispatch: {}
   push:
-    paths: ['alerting_client.py', '.github/workflows/build-windows-client.yml']
+    paths: ['alerting_client.py', 'make_icons.py', 'WINDOWSICON.jfif', '.github/workflows/build-windows-client.yml']
 jobs:
   build:
     runs-on: windows-latest
@@ -17,8 +17,8 @@ jobs:
         run: |
           $opts = @('--onefile', '--noconsole', '--name', 'AlertingClient')
           if (Test-Path 'WINDOWSICON.jfif') {
-            python -c "from PIL import Image; Image.open('WINDOWSICON.jfif').convert('RGBA').save('icon.ico', sizes=[(16,16),(32,32),(48,48),(256,256)])"
-            $opts += @('--icon', 'icon.ico')
+            python make_icons.py
+            $opts += @('--icon', 'icon.ico', '--add-data', 'icon.ico;.', '--add-data', 'icon.png;.')
           }
           pyinstaller @opts alerting_client.py
       - uses: actions/upload-artifact@v4

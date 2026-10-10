@@ -6,6 +6,7 @@ import json
 import os
 import re
 import socket
+import sys
 import threading
 import urllib.error
 import urllib.request
@@ -30,6 +31,12 @@ COLOR_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
 def config_file():
     base = os.environ.get('APPDATA') or str(Path.home() / '.config')
     return Path(base) / 'AdminRouterClient' / 'client.json'
+
+
+def resource_path(name):
+    """Find a bundled file, both when running from source and from the PyInstaller exe."""
+    base = getattr(sys, '_MEIPASS', None) or os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, name)
 
 
 def load_client_id():
@@ -175,6 +182,7 @@ class AlertingClient:
     def __init__(self, root):
         self.root = root
         root.title('AdminRouter Alerting')
+        self.set_icon()
         root.geometry('520x320')
         root.minsize(520, 320)
         root.configure(bg=BLUE)
@@ -193,6 +201,22 @@ class AlertingClient:
         threading.Thread(target=self.discover, daemon=True).start()
 
     # ---------- UI ----------
+    def set_icon(self):
+        """Window/taskbar icon (bundled by the build). Alert windows inherit it."""
+        ico, png = resource_path('icon.ico'), resource_path('icon.png')
+        try:
+            if os.name == 'nt' and os.path.exists(ico):
+                self.root.iconbitmap(default=ico)
+                return
+        except tk.TclError:
+            pass
+        try:
+            if os.path.exists(png):
+                self.icon_image = tk.PhotoImage(file=png)
+                self.root.iconphoto(True, self.icon_image)
+        except tk.TclError:
+            pass
+
     def label(self, parent, text, size=10, bold=False, fg=WHITE, **kw):
         return tk.Label(parent, text=text, bg=parent.cget('bg'), fg=fg,
                         font=('Segoe UI', size, 'bold' if bold else 'normal'), **kw)
