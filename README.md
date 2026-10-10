@@ -51,14 +51,16 @@ python setup_adminrouter.py
 When setup finishes, it prints a line like this:
 
 ```text
-AdminRouter accessible at http://192.168.1.25:8080
+AdminRouter is running at http://192.168.1.25:8080
 ```
 
 Open that address in a browser. Use the username and password you entered
 while configuring the installer. On the same computer, `http://127.0.0.1:8080`
 will also work when the selected port is `8080`.
 
-The service starts immediately and is added to the Windows Startup folder.
+The setup prompts use a blue console style. The service starts immediately and
+is added to the Windows Startup folder. If it cannot start, check
+`adminrouter.log` in the AdminRouter folder.
 
 ### Download without Git
 
@@ -98,12 +100,12 @@ python3 setup_adminrouter.py
 Setup prints the address to open, for example:
 
 ```text
-AdminRouter accessible at http://192.168.1.25:8080
+AdminRouter is running at http://192.168.1.25:8080
 ```
 
 If user systemd is available, AdminRouter is enabled as a user service. If it
 is not available, setup uses a user crontab entry instead. It also starts the
-service immediately.
+service immediately. Startup and port errors are written to `adminrouter.log`.
 
 ## Updating
 
@@ -138,7 +140,7 @@ Windows Command Prompt:
 ```cmd
 wmic process where "CommandLine like '%%adminrouter_service.py%%'" call terminate
 del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AdminRouter.bat"
-del adminrouter_config.sql adminrouter_service.py
+del adminrouter_config.sql adminrouter_service.py adminrouter.log
 ```
 
 Linux:
@@ -147,7 +149,7 @@ Linux:
 systemctl --user disable --now adminrouter.service 2>/dev/null || true
 rm -f "$HOME/.config/systemd/user/adminrouter.service"
 crontab -l 2>/dev/null | grep -v 'adminrouter_service.py' | crontab -
-rm -f adminrouter_config.sql adminrouter_service.py
+rm -f adminrouter_config.sql adminrouter_service.py adminrouter.log
 ```
 
 ## Limits

@@ -11,10 +11,31 @@ import sqlite3
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 PACKAGE_SET = ["flask", "bcrypt", "zeroconf"]
 PBKDF2_ITERATIONS = 390000
+BLUE = "\033[44m\033[97m"
+RESET = "\033[0m"
+
+
+def enable_terminal_colors() -> None:
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+
+        handle = ctypes.windll.kernel32.GetStdHandle(-11)
+        mode = ctypes.c_ulong()
+        if ctypes.windll.kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            ctypes.windll.kernel32.SetConsoleMode(handle, mode.value | 0x0004)
+    except (AttributeError, OSError):
+        return
+
+
+def blue(text: str) -> str:
+    return f"{BLUE}{text}{RESET}"
 
 
 def is_supported_platform() -> bool:
@@ -23,7 +44,7 @@ def is_supported_platform() -> bool:
 
 def prompt_yes_no(prompt: str) -> bool:
     while True:
-        answer = input(f"{prompt} [y/n]: ").strip().lower()
+        answer = input(blue(f"{prompt} [y/n]: ")).strip().lower()
         if answer in {"y", "yes"}:
             return True
         if answer in {"n", "no"}:
@@ -233,7 +254,7 @@ def configure_linux_startup(service_script: Path, sql_path: Path) -> None:
             encoding="utf-8",
         )
         subprocess.run([systemd, "--user", "daemon-reload"], check=False)
-        subprocess.run([systemd, "--user", "enable", "--now", "adminrouter.service"], check=False)
+        subprocess.run([systemd, "--user", "enable", "adminrouter.service"], check=False)
         return
 
     command = f'@reboot {sys.executable} {service_script} {sql_path}'
@@ -244,22 +265,30 @@ def configure_linux_startup(service_script: Path, sql_path: Path) -> None:
         subprocess.run(["crontab", "-"], input="\n".join(lines) + "\n", text=True, check=False)
 
 
-def run_in_background_now(service_script: Path, sql_path: Path) -> None:
-    with open(os.devnull, "wb") as devnull:
+def run_in_background_now(service_script: Path, sql_path: Path, port: int, log_path: Path) -> bool:
+    with open(log_path, "ab") as log_file:
         if platform.system() == "Windows":
             subprocess.Popen(
                 [sys.executable, str(service_script), str(sql_path)],
-                stdout=devnull,
-                stderr=devnull,
+                stdout=log_file,
+                stderr=log_file,
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
             )
         else:
             subprocess.Popen(
                 [sys.executable, str(service_script), str(sql_path)],
-                stdout=devnull,
-                stderr=devnull,
+                stdout=log_file,
+                stderr=log_file,
                 start_new_session=True,
             )
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                return True
+        except OSError:
+            time.sleep(0.05)
+    return False
 
 
 def install_packages_if_requested() -> None:
@@ -291,33 +320,41 @@ def get_local_ip() -> str:
         sock.close()
 
 
+def print_setup_header() -> None:
+    print(blue("\n  AdminRouter setup  "))
+    print("Configure the admin login and the port for the web dashboard.\n")
+
+
 def main() -> int:
     if not is_supported_platform():
         print("This installer only supports Windows or Linux terminals.")
         return 1
 
+    enable_terminal_colors()
+    print_setup_header()
     install_packages_if_requested()
 
-    username = input("Username: ").strip()
+    username = input(blue("Username: ")).strip()
     while not username:
-        username = input("Username cannot be empty. Username: ").strip()
+        username = input(blue("Username cannot be empty. Username: ")).strip()
 
-    password = getpass.getpass("Password: ")
+    password = getpass.getpass(blue("Password: "))
     while not password:
-        password = getpass.getpass("Password cannot be empty. Password: ")
+        password = getpass.getpass(blue("Password cannot be empty. Password: "))
 
-    port_text = input("Port to run on: ").strip()
+    port_text = input(blue("Port to run on: ")).strip()
     while True:
         try:
             port = parse_port(port_text)
             break
         except ValueError as exc:
             print(str(exc))
-            port_text = input("Port to run on: ").strip()
+            port_text = input(blue("Port to run on: ")).strip()
 
     root = Path(__file__).resolve().parent
     sql_path = root / "adminrouter_config.sql"
     service_script = root / "adminrouter_service.py"
+    log_path = root / "adminrouter.log"
 
     generate_sql_file(sql_path, username, hash_password(password), port)
     create_service_script(service_script)
@@ -327,10 +364,13 @@ def main() -> int:
     else:
         configure_linux_startup(service_script, sql_path)
 
-    run_in_background_now(service_script, sql_path)
     print(f"Created {sql_path}")
+    running = run_in_background_now(service_script, sql_path, port, log_path)
     print("AdminRouter has been configured to run in background on startup.")
-    print(f"AdminRouter accessible at http://{get_local_ip()}:{port}")
+    if running:
+        print(blue(f"AdminRouter is running at http://{get_local_ip()}:{port}"))
+    else:
+        print(f"AdminRouter did not respond on port {port}. Check {log_path}.")
     return 0
 
 
