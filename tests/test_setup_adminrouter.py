@@ -1,17 +1,17 @@
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import setup_adminrouter
 
 
 class SetupAdminRouterTests(unittest.TestCase):
-    def test_hash_password_is_sha256(self):
-        hashed = setup_adminrouter.hash_password("secret")
-        self.assertEqual(
-            hashed,
-            "2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b",
-        )
+    def test_hash_password_uses_pbkdf2_format(self):
+        with mock.patch("setup_adminrouter.os.urandom", return_value=b"\x01" * 16):
+            hashed = setup_adminrouter.hash_password("secret")
+        self.assertTrue(hashed.startswith("pbkdf2_sha256$390000$"))
+        self.assertEqual(len(hashed.split("$")), 4)
 
     def test_generate_sql_file_escapes_values(self):
         with tempfile.TemporaryDirectory() as tmp:

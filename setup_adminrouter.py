@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 
 PACKAGE_SET = ["flask", "bcrypt", "zeroconf"]
+PBKDF2_ITERATIONS = 390000
 
 
 def is_supported_platform() -> bool:
@@ -27,7 +28,14 @@ def prompt_yes_no(prompt: str) -> bool:
 
 
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode("utf-8")).hexdigest()
+    salt = os.urandom(16).hex()
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        bytes.fromhex(salt),
+        PBKDF2_ITERATIONS,
+    ).hex()
+    return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt}${digest}"
 
 
 def sql_escape(value: str) -> str:
