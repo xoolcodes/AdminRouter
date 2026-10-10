@@ -140,16 +140,20 @@ cd /d path\to\AdminRouter
 build_windows_client.cmd
 ```
 
-The executable is created at `dist\AdminRouterAlertingClient.exe`. Start it,
-enter the printed AdminRouter address and the admin login, then enable Remote
-Alerting in the dashboard Settings tab. The dashboard's test alert will appear
-in the client.
+The executable is created at `dist\AdminRouterAlertingClient.exe`. Start it
+and enter only the admin username. The client scans local IP addresses on the
+fixed discovery port `39872`, calls `/info/creditngtgtu`, and then switches to
+the selected dashboard port. It does not ask for or store the admin password.
+Enable Remote Alerting in the dashboard Settings tab; dashboard test alerts
+will appear in the client.
 
 GitHub Actions also builds the Windows executable automatically. Download the
 `AdminRouterAlertingClient-windows` artifact from the workflow run on GitHub.
 
 The Android client still needs a separate Android project and notification
-service; the server API is ready for one to poll `/api/alerts?after=ID`.
+service; the server API is ready for one to poll `/api/alerts?after=ID` with
+the `X-AdminRouter-Username` header. The supplied `WINDOWSICON.jfif` is
+converted into the Windows executable icon during the build.
 
 ## Uninstalling
 

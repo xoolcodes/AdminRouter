@@ -14,6 +14,7 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -116,12 +117,14 @@ import sqlite3
 import subprocess
 import sys
 import time
+import threading
 from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 SETTINGS_PATH = Path(__file__).resolve().parent / 'settings.json'
 ALERTS_PATH = Path(__file__).resolve().parent / 'alerts.json'
+DISCOVERY_PORT = 39872
 
 
 def load_config(sql_path):
@@ -295,11 +298,15 @@ def ping_device(address):
 class Handler(BaseHTTPRequestHandler):
     username = ''
     password_hash = ''
+    port = 0
     settings = load_settings()
     public_index = Path(__file__).resolve().parent / 'public' / 'index.html'
     sessions = set()
 
     def do_GET(self):
+        if self.path == '/info/creditngtgtu':
+            self.send_json({'service': 'AdminRouter', 'port': self.port, 'username': self.username, 'remote_alerting': self.settings['remote_alerting_enabled']})
+            return
         if self.path in {'/', '/index.html'}:
             self.serve_file('index.html')
             return
@@ -322,7 +329,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(self.settings)
             return
         if self.path.startswith('/api/alerts'):
-            if not self.is_authenticated():
+            if not self.is_authenticated() and not self.client_authorized():
                 self.send_json({'error': 'Authentication required'}, 401)
                 return
             query = parse_qs(urlsplit(self.path).query)
@@ -413,6 +420,9 @@ class Handler(BaseHTTPRequestHandler):
         }
         return cookies.get('admin_session') in self.sessions
 
+    def client_authorized(self):
+        return hmac.compare_digest(self.headers.get('X-AdminRouter-Username', ''), self.username)
+
     def serve_file(self, filename):
         try:
             payload = (self.public_index.parent / filename).read_bytes()
@@ -450,6 +460,9 @@ if __name__ == '__main__':
     username, password_hash, port = load_config(Path(sys.argv[1]))
     Handler.username = username
     Handler.password_hash = password_hash
+    Handler.port = int(port)
+    discovery_server = ThreadingHTTPServer(('0.0.0.0', DISCOVERY_PORT), Handler)
+    threading.Thread(target=discovery_server.serve_forever, daemon=True).start()
     server = ThreadingHTTPServer(('0.0.0.0', int(port)), Handler)
     server.serve_forever()
 '''
