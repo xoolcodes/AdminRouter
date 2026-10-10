@@ -16,7 +16,10 @@ from pathlib import Path
 
 PACKAGE_SET = ["flask", "bcrypt", "zeroconf"]
 PBKDF2_ITERATIONS = 390000
-BLUE = "\033[44m\033[97m"
+BLUE_BACKGROUND = "\033[44m"
+WHITE_BACKGROUND = "\033[47m"
+BLACK_TEXT = "\033[30m"
+WHITE_TEXT = "\033[97m"
 RESET = "\033[0m"
 
 
@@ -35,7 +38,11 @@ def enable_terminal_colors() -> None:
 
 
 def blue(text: str) -> str:
-    return f"{BLUE}{text}{RESET}"
+    return f"{BLUE_BACKGROUND}{WHITE_TEXT}{text}{RESET}"
+
+
+def setup_prompt(text: str) -> str:
+    return f"{WHITE_BACKGROUND}{BLACK_TEXT}{text}{RESET}{BLUE_BACKGROUND}{WHITE_TEXT}"
 
 
 def is_supported_platform() -> bool:
@@ -44,7 +51,7 @@ def is_supported_platform() -> bool:
 
 def prompt_yes_no(prompt: str) -> bool:
     while True:
-        answer = input(blue(f"{prompt} [y/n]: ")).strip().lower()
+        answer = input(setup_prompt(f"{prompt} [y/n]: ")).strip().lower()
         if answer in {"y", "yes"}:
             return True
         if answer in {"n", "no"}:
@@ -320,9 +327,21 @@ def get_local_ip() -> str:
         sock.close()
 
 
+def get_runtime_dir() -> Path:
+    if platform.system() == "Windows":
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+    else:
+        base = Path.home() / ".local/share"
+    return base / "AdminRouter"
+
+
 def print_setup_header() -> None:
-    print(blue("\n  AdminRouter setup  "))
-    print("Configure the admin login and the port for the web dashboard.\n")
+    width = 72
+    print("\033[2J\033[H", end="")
+    print(BLUE_BACKGROUND + " " * width)
+    print(f"{WHITE_BACKGROUND}{BLACK_TEXT}{' AdminRouter setup '.center(width)}{BLUE_BACKGROUND}")
+    print(f"{WHITE_TEXT}{'Configure the admin login and web port'.center(width)}")
+    print(" " * width)
 
 
 def main() -> int:
@@ -334,27 +353,30 @@ def main() -> int:
     print_setup_header()
     install_packages_if_requested()
 
-    username = input(blue("Username: ")).strip()
+    username = input(setup_prompt("Username: ")).strip()
     while not username:
-        username = input(blue("Username cannot be empty. Username: ")).strip()
+        username = input(setup_prompt("Username cannot be empty. Username: ")).strip()
 
-    password = getpass.getpass(blue("Password: "))
+    password = getpass.getpass(setup_prompt("Password: "))
     while not password:
-        password = getpass.getpass(blue("Password cannot be empty. Password: "))
+        password = getpass.getpass(setup_prompt("Password cannot be empty. Password: "))
 
-    port_text = input(blue("Port to run on: ")).strip()
+    port_text = input(setup_prompt("Port to run on: ")).strip()
     while True:
         try:
             port = parse_port(port_text)
             break
         except ValueError as exc:
             print(str(exc))
-            port_text = input(blue("Port to run on: ")).strip()
+            port_text = input(setup_prompt("Port to run on: ")).strip()
 
     root = Path(__file__).resolve().parent
-    sql_path = root / "adminrouter_config.sql"
-    service_script = root / "adminrouter_service.py"
-    log_path = root / "adminrouter.log"
+    runtime_dir = get_runtime_dir()
+    runtime_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(root / "public", runtime_dir / "public", dirs_exist_ok=True)
+    sql_path = runtime_dir / "adminrouter_config.sql"
+    service_script = runtime_dir / "adminrouter_service.py"
+    log_path = runtime_dir / "adminrouter.log"
 
     generate_sql_file(sql_path, username, hash_password(password), port)
     create_service_script(service_script)
@@ -364,13 +386,14 @@ def main() -> int:
     else:
         configure_linux_startup(service_script, sql_path)
 
-    print(f"Created {sql_path}")
+    print(f"Files stored in {runtime_dir}")
     running = run_in_background_now(service_script, sql_path, port, log_path)
     print("AdminRouter has been configured to run in background on startup.")
     if running:
         print(blue(f"AdminRouter is running at http://{get_local_ip()}:{port}"))
     else:
         print(f"AdminRouter did not respond on port {port}. Check {log_path}.")
+    print(RESET, end="")
     return 0
 
 

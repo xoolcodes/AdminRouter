@@ -20,32 +20,25 @@ packages. The basic service does not need them.
 
 These commands use Command Prompt (`cmd.exe`), not PowerShell.
 
-### Install Python and Git without winget
+### Install and run in one Command Prompt window
 
 ```cmd
 mkdir "%USERPROFILE%\Downloads" 2>nul
 cd /d "%USERPROFILE%\Downloads"
 curl.exe -L -o python-installer.exe https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe
 start /wait "" python-installer.exe /quiet InstallAllUsers=0 PrependPath=1 Include_test=0
-curl.exe -L -o git-installer.exe https://github.com/git-for-windows/git/releases/download/v2.49.0.windows.1/Git-2.49.0-64-bit.exe
-start /wait "" git-installer.exe /VERYSILENT /NORESTART
+set "PYTHON=%LocalAppData%\Programs\Python\Python312\python.exe"
+curl.exe -L -o AdminRouter.zip https://github.com/xoolcodes/AdminRouter/archive/refs/heads/main.zip
+tar -xf AdminRouter.zip
+"%PYTHON%" AdminRouter-main\setup_adminrouter.py
 ```
 
-Close Command Prompt and open a new one so Windows reloads `PATH`. Then run:
+This uses one Command Prompt window and does not depend on `PATH` being
+refreshed after Python is installed. If Python is already installed, run:
 
 ```cmd
-git --version
-py --version
-cd /d "%USERPROFILE%\Downloads"
-git clone https://github.com/xoolcodes/AdminRouter.git
-cd AdminRouter
+cd /d "%USERPROFILE%\Downloads\AdminRouter-main"
 py setup_adminrouter.py
-```
-
-If `py` is not available but `python` is, run:
-
-```cmd
-python setup_adminrouter.py
 ```
 
 When setup finishes, it prints a line like this:
@@ -59,20 +52,13 @@ while configuring the installer. On the same computer, `http://127.0.0.1:8080`
 will also work when the selected port is `8080`.
 
 The setup prompts use a blue console style. The service starts immediately and
-is added to the Windows Startup folder. If it cannot start, check
-`adminrouter.log` in the AdminRouter folder.
+is added to the Windows Startup folder. Generated files are stored in
+`%LOCALAPPDATA%\AdminRouter`, not in Downloads or on the Desktop. If it cannot
+start, check `adminrouter.log` in that folder.
 
-### Download without Git
-
-If Git is not available, download the project ZIP from Command Prompt:
-
-```cmd
-cd /d "%USERPROFILE%\Downloads"
-curl.exe -L -o AdminRouter.zip https://github.com/xoolcodes/AdminRouter/archive/refs/heads/main.zip
-tar -xf AdminRouter.zip
-cd AdminRouter-main
-py setup_adminrouter.py
-```
+Git is not required for the Windows setup above. If `curl.exe` or `tar` is
+unavailable, install Git and Python from their official installers, then clone
+the repository and run `py setup_adminrouter.py`.
 
 ## Linux
 
@@ -105,7 +91,9 @@ AdminRouter is running at http://192.168.1.25:8080
 
 If user systemd is available, AdminRouter is enabled as a user service. If it
 is not available, setup uses a user crontab entry instead. It also starts the
-service immediately. Startup and port errors are written to `adminrouter.log`.
+service immediately. Generated files are stored in
+`~/.local/share/AdminRouter`; startup and port errors are written to
+`adminrouter.log` there.
 
 ## Updating
 
@@ -116,7 +104,7 @@ On Windows Command Prompt, run from the AdminRouter folder:
 ```cmd
 wmic process where "CommandLine like '%%adminrouter_service.py%%'" call terminate
 git pull --ff-only
-py setup_adminrouter.py
+"%LocalAppData%\Programs\Python\Python312\python.exe" setup_adminrouter.py
 ```
 
 On Linux, run from the AdminRouter folder:
@@ -140,7 +128,7 @@ Windows Command Prompt:
 ```cmd
 wmic process where "CommandLine like '%%adminrouter_service.py%%'" call terminate
 del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AdminRouter.bat"
-del adminrouter_config.sql adminrouter_service.py adminrouter.log
+rmdir /s /q "%LOCALAPPDATA%\AdminRouter"
 ```
 
 Linux:
@@ -149,7 +137,7 @@ Linux:
 systemctl --user disable --now adminrouter.service 2>/dev/null || true
 rm -f "$HOME/.config/systemd/user/adminrouter.service"
 crontab -l 2>/dev/null | grep -v 'adminrouter_service.py' | crontab -
-rm -f adminrouter_config.sql adminrouter_service.py adminrouter.log
+rm -rf "$HOME/.local/share/AdminRouter"
 ```
 
 ## Limits
