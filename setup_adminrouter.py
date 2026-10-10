@@ -2,9 +2,11 @@
 import getpass
 import hashlib
 import hmac
+import ipaddress
 import json
 import os
 import platform
+import re
 import secrets
 import shutil
 import sqlite3
@@ -16,9 +18,6 @@ from pathlib import Path
 
 PACKAGE_SET = ["flask", "bcrypt", "zeroconf"]
 PBKDF2_ITERATIONS = 390000
-BLUE_BACKGROUND = "\033[44m"
-WHITE_BACKGROUND = "\033[47m"
-BLACK_TEXT = "\033[30m"
 WHITE_TEXT = "\033[97m"
 RESET = "\033[0m"
 
@@ -38,11 +37,11 @@ def enable_terminal_colors() -> None:
 
 
 def blue(text: str) -> str:
-    return f"{BLUE_BACKGROUND}{WHITE_TEXT}{text}{RESET}"
+    return f"{WHITE_TEXT}{text}{RESET}"
 
 
 def setup_prompt(text: str) -> str:
-    return f"{WHITE_BACKGROUND}{BLACK_TEXT}{text}{RESET}{BLUE_BACKGROUND}{WHITE_TEXT}"
+    return f"{WHITE_TEXT}{text}{RESET}"
 
 
 def is_supported_platform() -> bool:
@@ -111,10 +110,15 @@ def create_service_script(path: Path) -> None:
     script = '''#!/usr/bin/env python3
 import hashlib
 import hmac
+import ipaddress
 import json
+import platform
+import re
 import secrets
 import sqlite3
 import sys
+import socket
+import subprocess
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -147,6 +151,58 @@ def verify_password(password, stored_hash):
     return hmac.compare_digest(digest, expected)
 
 
+def discover_devices():
+    commands = [['arp', '-a']]
+    if platform.system() != 'Windows':
+        commands.insert(0, ['ip', 'neigh'])
+    devices = {}
+    ip_pattern = re.compile(r'\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b')
+    mac_pattern = re.compile(r'(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}')
+    for command in commands:
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=3, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        for line in result.stdout.splitlines():
+            ip_match = ip_pattern.search(line)
+            if not ip_match:
+                continue
+            address = ip_match.group(0)
+            try:
+                ipaddress.ip_address(address)
+            except ValueError:
+                continue
+            mac_match = mac_pattern.search(line)
+            devices[address] = {
+                'ip': address,
+                'mac': mac_match.group(0) if mac_match else 'unknown',
+                'name': 'Network device',
+            }
+    local_ip = '127.0.0.1'
+    try:
+        local_ip = socket.gethostbyname(socket.gethostname())
+    except OSError:
+        pass
+    devices.setdefault(local_ip, {'ip': local_ip, 'mac': 'local', 'name': 'This computer'})
+    return sorted(devices.values(), key=lambda device: device['ip'])
+
+
+def ping_device(address):
+    try:
+        target = str(ipaddress.ip_address(address))
+    except ValueError:
+        return {'ok': False, 'error': 'Invalid IP address'}
+    if platform.system() == 'Windows':
+        command = ['ping', '-n', '1', '-w', '1000', target]
+    else:
+        command = ['ping', '-c', '1', '-W', '1', target]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=4, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return {'ok': False, 'error': 'Ping could not be run'}
+    return {'ok': result.returncode == 0, 'ip': target}
+
+
 class Handler(BaseHTTPRequestHandler):
     username = ''
     password_hash = ''
@@ -155,7 +211,21 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path in {'/', '/index.html'}:
-            self.serve_index()
+            self.serve_file('index.html')
+            return
+        if self.path == '/dashboard.html':
+            if not self.is_authenticated():
+                self.send_response(302)
+                self.send_header('Location', '/')
+                self.end_headers()
+                return
+            self.serve_file('dashboard.html')
+            return
+        if self.path == '/api/devices':
+            if not self.is_authenticated():
+                self.send_json({'error': 'Authentication required'}, 401)
+                return
+            self.send_json({'devices': discover_devices()})
             return
         if self.path == '/api/status':
             if not self.is_authenticated():
@@ -166,6 +236,19 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
+        if self.path == '/api/ping':
+            if not self.is_authenticated():
+                self.send_json({'error': 'Authentication required'}, 401)
+                return
+            try:
+                length = min(int(self.headers.get('Content-Length', '0')), 1024)
+                data = json.loads(self.rfile.read(length))
+                result = ping_device(str(data.get('ip', '')))
+            except (ValueError, TypeError, json.JSONDecodeError):
+                self.send_json({'ok': False, 'error': 'Invalid request'}, 400)
+                return
+            self.send_json(result, 200 if result['ok'] else 400)
+            return
         if self.path != '/api/login':
             self.send_error(404)
             return
@@ -196,11 +279,11 @@ class Handler(BaseHTTPRequestHandler):
         }
         return cookies.get('admin_session') in self.sessions
 
-    def serve_index(self):
+    def serve_file(self, filename):
         try:
-            payload = self.public_index.read_bytes()
+            payload = (self.public_index.parent / filename).read_bytes()
         except OSError:
-            self.send_error(500, 'public/index.html is missing')
+            self.send_error(500, f'public/{filename} is missing')
             return
         self.send_response(200)
         self.send_header('Content-Type', 'text/html; charset=utf-8')
@@ -337,10 +420,9 @@ def get_runtime_dir() -> Path:
 
 def print_setup_header() -> None:
     width = 72
-    print("\033[2J\033[H", end="")
-    print(BLUE_BACKGROUND + " " * width)
-    print(f"{WHITE_BACKGROUND}{BLACK_TEXT}{' AdminRouter setup '.center(width)}{BLUE_BACKGROUND}")
-    print(f"{WHITE_TEXT}{'Configure the admin login and web port'.center(width)}")
+    print("\033[2J\033[H\033[44m\033[97m", end="")
+    print(' AdminRouter setup '.center(width))
+    print('Configure the admin login and web port'.center(width))
     print(" " * width)
 
 

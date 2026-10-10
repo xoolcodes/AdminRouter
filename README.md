@@ -7,6 +7,10 @@ other package.
 The username and password entered during setup are the **admin login** for the
 web page.
 
+After login, AdminRouter opens a dashboard at `/dashboard.html`. The Devices
+tab reads the local ARP/neighbour table and provides a ping button for each
+address it finds. The Automation tab is present but marked **Coming soon**.
+
 ## Requirements
 
 - Python 3.8 or newer
@@ -146,4 +150,9 @@ rm -rf "$HOME/.local/share/AdminRouter"
 - The service listens on all network interfaces so another device on the LAN
   can open the printed address. Use a firewall if it should stay private.
 - The login page is served from `public/index.html`.
+- The dashboard is served from `public/dashboard.html` after admin login.
+- Device discovery depends on the operating system ARP/neighbour table. It
+  cannot see devices that the operating system has not learned about.
+- Ping uses the system `ping` command. On minimal Linux installations, install
+  the package that provides `ping` if the button reports that ping is unavailable.
 - The installer supports Windows and Linux only.

@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AdminRouter | Dashboard</title>
+  <style>
+    :root { font-family: "Segoe UI", Tahoma, sans-serif; color: #25221f; background: #f3efe9; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #f3efe9; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 18px; padding: 22px 5vw; border-bottom: 1px solid #ddd2c7; background: #fffdf9; }
+    .brand { margin: 0; font-size: 22px; letter-spacing: 0; }
+    .subtitle { margin: 4px 0 0; color: #84776d; font-size: 13px; }
+    main { width: min(1100px, 90%); margin: 34px auto; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 22px; border-bottom: 1px solid #d8cdc3; }
+    .tab { padding: 12px 18px; border: 0; border-bottom: 3px solid transparent; color: #78695e; background: transparent; cursor: pointer; font: inherit; font-weight: 700; }
+    .tab.active { border-bottom-color: #a75236; color: #352820; }
+    .panel { padding: 26px; border: 1px solid #ded3c9; border-radius: 10px; background: #fffdf9; box-shadow: 0 8px 30px rgba(66, 48, 36, .07); }
+    .panel h2 { margin: 0 0 6px; font-size: 23px; }
+    .panel p { margin: 0 0 22px; color: #78695e; }
+    .status { min-height: 20px; margin: 0 0 14px; color: #a75236; font-size: 13px; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; text-align: left; }
+    th, td { padding: 14px 12px; border-bottom: 1px solid #eee6df; white-space: nowrap; }
+    th { color: #78695e; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+    td { font-size: 14px; }
+    .ping { padding: 8px 13px; border: 0; border-radius: 7px; color: #fff; background: #a75236; cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; }
+    .ping:hover { background: #7f3f2e; }
+    .result { color: #55715a; font-size: 13px; }
+    .empty { padding: 22px 0; color: #78695e; }
+    .coming-soon { display: grid; min-height: 260px; place-items: center; text-align: center; }
+    .coming-soon strong { display: block; margin-bottom: 8px; font-size: 24px; }
+    .coming-soon span { color: #78695e; }
+    @media (max-width: 640px) { header { align-items: flex-start; flex-direction: column; } main { width: 94%; margin-top: 22px; } .panel { padding: 18px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1 class="brand">AdminRouter</h1>
+      <p class="subtitle">Network administration</p>
+    </div>
+    <span id="device-count" class="subtitle">Loading devices...</span>
+  </header>
+  <main>
+    <nav class="tabs" aria-label="Dashboard sections">
+      <button class="tab active" data-panel="devices-panel">Devices</button>
+      <button class="tab" data-panel="automation-panel">Automation</button>
+    </nav>
+    <section id="devices-panel" class="panel">
+      <h2>Connected devices</h2>
+      <p>Devices currently visible in the local network table.</p>
+      <div id="status" class="status" role="status"></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Address</th><th>Hardware address</th><th>Name</th><th>Check</th></tr></thead>
+          <tbody id="device-list"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <section id="automation-panel" class="panel coming-soon" hidden>
+      <div><strong>Automation</strong><span>Coming soon. Saved network actions will live here.</span></div>
+    </section>
+  </main>
+  <script>
+    const list = document.getElementById('device-list');
+    const count = document.getElementById('device-count');
+    const status = document.getElementById('status');
+
+    function renderDevices(devices) {
+      count.textContent = `${devices.length} device${devices.length === 1 ? '' : 's'} found`;
+      list.innerHTML = devices.length ? devices.map((device) => `
+        <tr>
+          <td>${device.ip}</td>
+          <td>${device.mac}</td>
+          <td>${device.name}</td>
+          <td><button class="ping" data-ip="${device.ip}">Ping</button> <span class="result" data-result="${device.ip}"></span></td>
+        </tr>`).join('') : '<tr><td colspan="4" class="empty">No network devices were found.</td></tr>';
+      document.querySelectorAll('.ping').forEach((button) => button.addEventListener('click', () => ping(button)));
+    }
+
+    async function loadDevices() {
+      try {
+        const response = await fetch('/api/devices');
+        if (response.status === 401) { window.location.href = '/'; return; }
+        const data = await response.json();
+        renderDevices(data.devices || []);
+      } catch (error) {
+        status.textContent = 'Could not load devices. Check the service log.';
+        list.innerHTML = '<tr><td colspan="4" class="empty">Device discovery failed.</td></tr>';
+      }
+    }
+
+    async function ping(button) {
+      const result = document.querySelector(`[data-result="${button.dataset.ip}"]`);
+      button.disabled = true;
+      result.textContent = 'Checking...';
+      try {
+        const response = await fetch('/api/ping', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ip: button.dataset.ip }) });
+        const data = await response.json();
+        result.textContent = data.ok ? 'Reachable' : 'No response';
+      } catch (error) {
+        result.textContent = 'Failed';
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    document.querySelectorAll('.tab').forEach((tab) => tab.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach((item) => item.classList.remove('active'));
+      document.querySelectorAll('main > section').forEach((panel) => { panel.hidden = panel.id !== tab.dataset.panel; });
+      tab.classList.add('active');
+    }));
+    loadDevices();
+  </script>
+</body>
+</html>

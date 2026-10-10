@@ -132,11 +132,7 @@
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'Sign in failed');
-        form.style.display = 'none';
-        document.getElementById('signed-in-user').textContent = result.user;
-        dashboard.style.display = 'block';
-        message.textContent = 'Signed in successfully.';
-        message.className = 'message success';
+        window.location.href = '/dashboard.html';
       } catch (error) {
         message.textContent = error.message;
       } finally {
