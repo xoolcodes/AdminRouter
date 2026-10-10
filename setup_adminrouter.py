@@ -221,15 +221,15 @@ def main() -> int:
             port_text = ask("Port to run on:")
     say()
     root = Path(__file__).resolve().parent
-    service_source = root / "adminrouter_service.py"
+    service_source = root / "adminrouterservice.py"
     if not service_source.exists():
-        say("adminrouter_service.py must sit next to this installer.")
+        say("adminrouterservice.py must sit next to this installer.")
         return 1
     runtime_dir = get_runtime_dir()
     runtime_dir.mkdir(parents=True, exist_ok=True)
     shutil.copytree(root / "public", runtime_dir / "public", dirs_exist_ok=True)
     sql_path = runtime_dir / "adminrouter_config.sql"
-    service_script = runtime_dir / "adminrouter_service.py"
+    service_script = runtime_dir / "adminrouterservice.py"
     log_path = runtime_dir / "adminrouter.log"
     generate_sql_file(sql_path, username, hash_password(password), port)
     install_service_script(service_source, service_script)
