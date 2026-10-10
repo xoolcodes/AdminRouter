@@ -11,24 +11,16 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pyinstaller pillow
+      - run: pip install pyinstaller
       - name: Build exe
         shell: pwsh
         run: |
-          $iconPath = Join-Path (Get-Location) 'combined_icon.ico'
+          $opts = @('--onefile', '--noconsole', '--name', 'AlertingClient')
           
-          # Combine multiple sizes into a proper multi-res .ico with an absolute path
-          if ((Test-Path 'icon_16x16.ico') -and (Test-Path 'icon_32x32.ico') -and (Test-Path 'icon_48x48.ico')) {
-            python -c "
-            from PIL import Image
-            img16 = Image.open('icon_16x16.ico')
-            img32 = Image.open('icon_32x32.ico')
-            img48 = Image.open('icon_48x48.ico')
-            img48.save(r'$iconPath', format='ICO', append_images=[img32, img16])
-            "
+          if (Test-Path 'icon_32x32.ico') {
+            $opts += @('--icon', 'icon_32x32.ico')
           }
           
-          $opts = @('--onefile', '--noconsole', '--name', 'AlertingClient', '--icon', $iconPath)
           pyinstaller @opts alerting_client.py
       - uses: actions/upload-artifact@v4
         with:
