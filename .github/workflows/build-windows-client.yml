@@ -2,7 +2,7 @@ name: Build Windows client
 on:
   workflow_dispatch: {}
   push:
-    paths: ['alerting_client.py', 'make_icons.py', 'WINDOWSICON.jfif', '.github/workflows/build-windows-client.yml']
+    paths: ['alerting_client.py', 'icon_16x16.ico', 'icon_32x32.ico', 'icon_48x48.ico', '.github/workflows/build-windows-client.yml']
 jobs:
   build:
     runs-on: windows-latest
@@ -16,10 +16,19 @@ jobs:
         shell: pwsh
         run: |
           $opts = @('--onefile', '--noconsole', '--name', 'AlertingClient')
-          if (Test-Path 'WINDOWSICON.jfif') {
-            python make_icons.py
-            $opts += @('--icon', 'icon.ico', '--add-data', 'icon.ico;.', '--add-data', 'icon.png;.')
+          
+          # Combine multiple sizes into a single proper multi-res .ico for PyInstaller if they exist
+          if ((Test-Path 'icon_16x16.ico') -and (Test-Path 'icon_32x32.ico') -and (Test-Path 'icon_48x48.ico')) {
+            python -c "
+            from PIL import Image
+            img16 = Image.open('icon_16x16.ico')
+            img32 = Image.open('icon_32x32.ico')
+            img48 = Image.open('icon_48x48.ico')
+            img48.save('combined_icon.ico', format='ICO', append_images=[img32, img16])
+            "
+            $opts += @('--icon', 'combined_icon.ico', '--add-data', 'combined_icon.ico;.')
           }
+          
           pyinstaller @opts alerting_client.py
       - uses: actions/upload-artifact@v4
         with:
