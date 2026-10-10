@@ -4,79 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>AdminRouter | Admin sign in</title>
+  <script>
+    try { document.documentElement.dataset.theme = localStorage.getItem('adminrouter_theme') || 'original'; } catch (e) {}
+  </script>
   <style>
-    :root {
-      color-scheme: light;
-      font-family: "Segoe UI", Tahoma, sans-serif;
-      background: #251b17;
-      color: #2b211d;
-    }
-
+    :root { color-scheme: light; font-family: "Segoe UI", Tahoma, sans-serif; background: #251b17; color: #2b211d; }
     * { box-sizing: border-box; }
-
-    body {
-      min-height: 100vh;
-      margin: 0;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-      background: linear-gradient(135deg, #f5ece5 0%, #d7b6a0 52%, #a9684d 100%);
-    }
-
-    .shell {
-      width: min(100%, 430px);
-      overflow: hidden;
-      border: 1px solid rgba(255, 255, 255, .22);
-      border-radius: 18px;
-      background: rgba(255, 255, 255, .97);
-      box-shadow: 0 24px 70px rgba(0, 0, 0, .3);
-    }
-
-    .brand {
-      padding: 32px 34px 28px;
-      color: #fff;
-      background: linear-gradient(135deg, #3a2923, #8a4f3d);
-    }
-
-    .mark {
-      display: inline-grid;
-      width: 42px;
-      height: 42px;
-      margin-bottom: 18px;
-      place-items: center;
-      border: 1px solid rgba(255, 255, 255, .35);
-      border-radius: 12px;
-      background: rgba(255, 255, 255, .12);
-      font-size: 20px;
-      font-weight: 700;
-    }
-
+    body { min-height: 100vh; margin: 0; display: grid; place-items: center; padding: 24px; background: linear-gradient(135deg, #f5ece5 0%, #d7b6a0 52%, #a9684d 100%); }
+    .shell { width: min(100%, 430px); overflow: hidden; border: 1px solid rgba(255, 255, 255, .22); border-radius: 18px; background: rgba(255, 255, 255, .97); box-shadow: 0 24px 70px rgba(0, 0, 0, .3); }
+    .brand { padding: 32px 34px 28px; color: #fff; background: linear-gradient(135deg, #3a2923, #8a4f3d); }
+    .mark { display: inline-grid; width: 42px; height: 42px; margin-bottom: 18px; place-items: center; border: 1px solid rgba(255, 255, 255, .35); border-radius: 12px; background: rgba(255, 255, 255, .12); font-size: 20px; font-weight: 700; }
     h1 { margin: 0; font-size: 28px; letter-spacing: 0; }
     .subtitle { margin: 8px 0 0; color: #f6ddd0; font-size: 14px; }
     .content { padding: 30px 34px 34px; }
     label { display: block; margin: 0 0 7px; color: #5f4337; font-size: 13px; font-weight: 700; }
-    input {
-      width: 100%;
-      margin-bottom: 19px;
-      padding: 13px 14px;
-      border: 1px solid #d9c9be;
-      border-radius: 9px;
-      color: #2b211d;
-      background: #fffaf7;
-      font: inherit;
-    }
+    input { width: 100%; margin-bottom: 19px; padding: 13px 14px; border: 1px solid #d9c9be; border-radius: 9px; color: #2b211d; background: #fffaf7; font: inherit; }
     input:focus { outline: 3px solid #f4c7b5; border-color: #ad5a3e; }
-    button {
-      width: 100%;
-      padding: 13px 16px;
-      border: 0;
-      border-radius: 9px;
-      color: #fff;
-      background: #a75236;
-      cursor: pointer;
-      font: inherit;
-      font-weight: 700;
-    }
+    button { width: 100%; padding: 13px 16px; border: 0; border-radius: 9px; color: #fff; background: #a75236; cursor: pointer; font: inherit; font-weight: 700; }
     button:hover { background: #7f3f2e; }
     button:disabled { cursor: wait; opacity: .7; }
     .message { min-height: 22px; margin: 0 0 14px; color: #a22828; font-size: 13px; }
@@ -85,6 +29,33 @@
     .dashboard h2 { margin: 0 0 8px; color: #2b211d; font-size: 22px; }
     .dashboard p { margin: 0; color: #745f55; line-height: 1.5; }
     .footer { margin-top: 24px; color: #9a8378; font-size: 12px; text-align: center; }
+    /* classic look */
+    [data-theme="classic"] body, [data-theme="classic"] { font-family: Tahoma, "MS Sans Serif", Arial, sans-serif; }
+    [data-theme="classic"] body { background: #008080; }
+    [data-theme="classic"] .shell { border: 2px solid; border-color: #fff #404040 #404040 #fff; border-radius: 0; background: #c0c0c0; box-shadow: none; }
+    [data-theme="classic"] .brand { padding: 6px 10px; background: #000080; }
+    [data-theme="classic"] .mark { display: none; }
+    [data-theme="classic"] h1 { font-size: 15px; }
+    [data-theme="classic"] .subtitle { margin: 0; color: #c8d0ff; font-size: 12px; }
+    [data-theme="classic"] label, [data-theme="classic"] .footer { color: #000; }
+    [data-theme="classic"] input { border: 2px solid; border-color: #404040 #fff #fff #404040; border-radius: 0; background: #fff; }
+    [data-theme="classic"] input:focus { outline: 1px dotted #000; }
+    [data-theme="classic"] button { border: 2px solid; border-color: #fff #404040 #404040 #fff; border-radius: 0; color: #000; background: #c0c0c0; }
+    [data-theme="classic"] button:hover { background: #d4d0c8; }
+    /* futuristic look */
+    [data-theme="futuristic"] { font-family: "Bahnschrift", "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+    [data-theme="futuristic"] body { background: radial-gradient(circle at 12% 18%, #0a0a0a 0 190px, transparent 191px), radial-gradient(circle at 92% 90%, #d0d0d0 0 260px, transparent 261px), #ececec; }
+    [data-theme="futuristic"] .shell { border: 0; border-radius: 44px 44px 44px 10px; background: #fff; box-shadow: 0 30px 80px rgba(0, 0, 0, .18); }
+    [data-theme="futuristic"] .brand { position: relative; padding: 34px 34px 46px; background: #0a0a0a; border-radius: 0 0 50% 50% / 0 0 34px 34px; }
+    [data-theme="futuristic"] .mark { border-radius: 50%; border-color: #fff; background: transparent; }
+    [data-theme="futuristic"] h1 { font-weight: 300; letter-spacing: .14em; }
+    [data-theme="futuristic"] .subtitle { color: #a8a8a8; }
+    [data-theme="futuristic"] label { color: #0a0a0a; }
+    [data-theme="futuristic"] input { border: 1px solid #dcdcdc; border-radius: 999px; background: #f6f6f6; padding: 13px 20px; }
+    [data-theme="futuristic"] input:focus { outline: 2px solid #0a0a0a; border-color: #0a0a0a; }
+    [data-theme="futuristic"] button { border-radius: 999px; background: #0a0a0a; }
+    [data-theme="futuristic"] button:hover { background: #3a3a3a; }
+    [data-theme="futuristic"] .footer { color: #8a8a8a; }
   </style>
 </head>
 <body>
@@ -103,10 +74,6 @@
         <p id="message" class="message" role="status"></p>
         <button id="submit" type="submit">Sign in</button>
       </form>
-      <section id="dashboard" class="dashboard" aria-live="polite">
-        <h2>Signed in</h2>
-        <p>Welcome, <strong id="signed-in-user"></strong>. Your AdminRouter session is active.</p>
-      </section>
       <p class="footer">AdminRouter local administration</p>
     </section>
   </main>
@@ -114,7 +81,6 @@
     const form = document.getElementById('login-form');
     const message = document.getElementById('message');
     const button = document.getElementById('submit');
-    const dashboard = document.getElementById('dashboard');
 
     form.addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -125,10 +91,7 @@
         const response = await fetch('/api/login', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username: form.username.value,
-            password: form.password.value
-          })
+          body: JSON.stringify({ username: form.username.value, password: form.password.value })
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.error || 'Sign in failed');
