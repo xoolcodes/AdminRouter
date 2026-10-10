@@ -115,10 +115,13 @@ import socket
 import sqlite3
 import subprocess
 import sys
+import time
+from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 SETTINGS_PATH = Path(__file__).resolve().parent / 'settings.json'
+ALERTS_PATH = Path(__file__).resolve().parent / 'alerts.json'
 
 
 def load_config(sql_path):
@@ -156,6 +159,18 @@ def load_settings():
 
 def save_settings(settings):
     SETTINGS_PATH.write_text(json.dumps(settings, indent=2) + '\\n', encoding='utf-8')
+
+
+def load_alerts():
+    try:
+        data = json.loads(ALERTS_PATH.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        data = []
+    return data if isinstance(data, list) else []
+
+
+def save_alerts(alerts):
+    ALERTS_PATH.write_text(json.dumps(alerts[-100:], indent=2) + '\\n', encoding='utf-8')
 
 
 def local_ip():
@@ -306,6 +321,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             self.send_json(self.settings)
             return
+        if self.path.startswith('/api/alerts'):
+            if not self.is_authenticated():
+                self.send_json({'error': 'Authentication required'}, 401)
+                return
+            query = parse_qs(urlsplit(self.path).query)
+            after = int(query.get('after', ['0'])[0]) if query.get('after') else 0
+            self.send_json({'alerts': [alert for alert in load_alerts() if alert['id'] > after]})
+            return
         if self.path == '/api/devices':
             if not self.is_authenticated():
                 self.send_json({'error': 'Authentication required'}, 401)
@@ -339,7 +362,20 @@ class Handler(BaseHTTPRequestHandler):
             if not self.settings['remote_alerting_enabled']:
                 self.send_json({'ok': False, 'error': 'Remote Alerting is disabled'}, 403)
                 return
-            self.send_json({'ok': False, 'error': 'Companion app is not connected'}, 503)
+            try:
+                length = min(int(self.headers.get('Content-Length', '0')), 2048)
+                data = json.loads(self.rfile.read(length))
+                message = str(data.get('message', '')).strip()
+                if not message:
+                    raise ValueError('Message is empty')
+                alerts = load_alerts()
+                alert = {'id': (alerts[-1]['id'] + 1 if alerts else 1), 'message': message, 'created': int(time.time())}
+                alerts.append(alert)
+                save_alerts(alerts)
+            except (ValueError, TypeError, json.JSONDecodeError, OSError):
+                self.send_json({'ok': False, 'error': 'Invalid alert'}, 400)
+                return
+            self.send_json({'ok': True, 'queued': True, 'id': alert['id']})
             return
         if self.path == '/api/ping':
             try:

@@ -14,8 +14,8 @@ Automation tab is present but marked **Coming soon**.
 
 Settings includes a Remote Alerting switch. When enabled, the Remote Alerting
 tab appears. The server endpoint is ready for a companion client, but native
-Windows `.exe` and Android apps are not included yet, so alerts currently
-report that no companion app is connected.
+Windows `.exe` and Android apps are separate clients. A Windows client source
+and build script are included below; an Android client is not included yet.
 
 ## Requirements
 
@@ -128,6 +128,28 @@ python3 setup_adminrouter.py
 Use the same admin username, password, and port if you want to keep the same
 login and address. Setup writes a new configuration and starts the updated
 service.
+
+## Windows alerting client
+
+The repository includes `remote_alerting_client.py`, a small desktop client
+that polls the server and displays Windows notifications. Build it on a
+Windows machine from Command Prompt:
+
+```cmd
+cd /d path\to\AdminRouter
+build_windows_client.cmd
+```
+
+The executable is created at `dist\AdminRouterAlertingClient.exe`. Start it,
+enter the printed AdminRouter address and the admin login, then enable Remote
+Alerting in the dashboard Settings tab. The dashboard's test alert will appear
+in the client.
+
+GitHub Actions also builds the Windows executable automatically. Download the
+`AdminRouterAlertingClient-windows` artifact from the workflow run on GitHub.
+
+The Android client still needs a separate Android project and notification
+service; the server API is ready for one to poll `/api/alerts?after=ID`.
 
 ## Uninstalling
 
