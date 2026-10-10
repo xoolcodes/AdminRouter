@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import concurrent.futures
 import getpass
 import hashlib
 import hmac
@@ -9,8 +10,8 @@ import platform
 import re
 import secrets
 import shutil
-import sqlite3
 import socket
+import sqlite3
 import subprocess
 import sys
 import time
@@ -41,7 +42,7 @@ def blue(text: str) -> str:
 
 
 def setup_prompt(text: str) -> str:
-    return f"{WHITE_TEXT}{text}{RESET}"
+    return blue(text)
 
 
 def is_supported_platform() -> bool:
@@ -61,10 +62,7 @@ def prompt_yes_no(prompt: str) -> bool:
 def hash_password(password: str) -> str:
     salt = os.urandom(16).hex()
     digest = hashlib.pbkdf2_hmac(
-        "sha256",
-        password.encode("utf-8"),
-        bytes.fromhex(salt),
-        PBKDF2_ITERATIONS,
+        "sha256", password.encode("utf-8"), bytes.fromhex(salt), PBKDF2_ITERATIONS
     ).hex()
     return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt}${digest}"
 
@@ -75,10 +73,7 @@ def verify_password(password: str, stored_hash: str) -> bool:
         if algorithm != "pbkdf2_sha256":
             return False
         digest = hashlib.pbkdf2_hmac(
-            "sha256",
-            password.encode("utf-8"),
-            bytes.fromhex(salt),
-            int(iterations_text),
+            "sha256", password.encode("utf-8"), bytes.fromhex(salt), int(iterations_text)
         ).hex()
     except (TypeError, ValueError):
         return False
@@ -108,6 +103,7 @@ def generate_sql_file(path: Path, username: str, password_hash: str, port: int) 
 
 def create_service_script(path: Path) -> None:
     script = '''#!/usr/bin/env python3
+import concurrent.futures
 import hashlib
 import hmac
 import ipaddress
@@ -115,15 +111,17 @@ import json
 import platform
 import re
 import secrets
-import sqlite3
-import sys
 import socket
+import sqlite3
 import subprocess
+import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+SETTINGS_PATH = Path(__file__).resolve().parent / 'settings.json'
 
-def load_config(sql_path: Path):
+
+def load_config(sql_path):
     conn = sqlite3.connect(':memory:')
     conn.executescript(sql_path.read_text(encoding='utf-8'))
     row = conn.execute(
@@ -141,71 +139,148 @@ def verify_password(password, stored_hash):
         if algorithm != 'pbkdf2_sha256':
             return False
         digest = hashlib.pbkdf2_hmac(
-            'sha256',
-            password.encode('utf-8'),
-            bytes.fromhex(salt),
-            int(iterations_text),
+            'sha256', password.encode('utf-8'), bytes.fromhex(salt), int(iterations_text)
         ).hex()
     except (TypeError, ValueError):
         return False
     return hmac.compare_digest(digest, expected)
 
 
-def discover_devices():
+def load_settings():
+    try:
+        data = json.loads(SETTINGS_PATH.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        data = {}
+    return {'remote_alerting_enabled': bool(data.get('remote_alerting_enabled', False))}
+
+
+def save_settings(settings):
+    SETTINGS_PATH.write_text(json.dumps(settings, indent=2) + '\\n', encoding='utf-8')
+
+
+def local_ip():
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(('8.8.8.8', 80))
+        address = sock.getsockname()[0]
+        sock.close()
+        return address
+    except OSError:
+        return '127.0.0.1'
+
+
+def hidden_flags():
+    return subprocess.CREATE_NO_WINDOW if platform.system() == 'Windows' else 0
+
+
+def read_neighbour_table():
     commands = [['arp', '-a']]
     if platform.system() != 'Windows':
         commands.insert(0, ['ip', 'neigh'])
-    devices = {}
+    entries = {}
     ip_pattern = re.compile(r'\\b(?:\\d{1,3}\\.){3}\\d{1,3}\\b')
     mac_pattern = re.compile(r'(?:[0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}')
     for command in commands:
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=3, check=False)
+            result = subprocess.run(command, capture_output=True, text=True, timeout=3, check=False, creationflags=hidden_flags())
         except (OSError, subprocess.TimeoutExpired):
             continue
         for line in result.stdout.splitlines():
             ip_match = ip_pattern.search(line)
-            if not ip_match:
-                continue
-            address = ip_match.group(0)
-            try:
-                ipaddress.ip_address(address)
-            except ValueError:
-                continue
-            mac_match = mac_pattern.search(line)
-            devices[address] = {
-                'ip': address,
-                'mac': mac_match.group(0) if mac_match else 'unknown',
-                'name': 'Network device',
-            }
-    local_ip = '127.0.0.1'
-    try:
-        local_ip = socket.gethostbyname(socket.gethostname())
-    except OSError:
-        pass
-    devices.setdefault(local_ip, {'ip': local_ip, 'mac': 'local', 'name': 'This computer'})
-    return sorted(devices.values(), key=lambda device: device['ip'])
+            if ip_match:
+                mac_match = mac_pattern.search(line)
+                entries[ip_match.group(0)] = mac_match.group(0) if mac_match else 'unknown'
+    return entries
 
 
-def ping_device(address):
+def classify_device(ttl, hostname):
+    label = (hostname or '').lower()
+    if any(value in label for value in ('iphone', 'ipad', 'ios')):
+        return 'iPhone/iPad', 'iOS (hostname guess)'
+    if any(value in label for value in ('android', 'pixel', 'galaxy')):
+        return 'Android phone/tablet', 'Android (hostname guess)'
+    if ttl <= 64:
+        return 'Computer/server', 'Linux/macOS/Android (TTL guess)'
+    if ttl <= 128:
+        return 'Computer/laptop', 'Windows (TTL guess)'
+    return 'Network device', 'Unknown OS'
+
+
+def run_ping(address):
     try:
         target = str(ipaddress.ip_address(address))
     except ValueError:
-        return {'ok': False, 'error': 'Invalid IP address'}
+        return None
     if platform.system() == 'Windows':
-        command = ['ping', '-n', '1', '-w', '1000', target]
+        command = ['ping', '-n', '1', '-w', '500', target]
+        creationflags = subprocess.CREATE_NO_WINDOW
     else:
         command = ['ping', '-c', '1', '-W', '1', target]
+        creationflags = 0
     try:
-        result = subprocess.run(command, capture_output=True, text=True, timeout=4, check=False)
+        result = subprocess.run(
+            command, capture_output=True, text=True, timeout=3, check=False,
+            creationflags=creationflags,
+        )
     except (OSError, subprocess.TimeoutExpired):
-        return {'ok': False, 'error': 'Ping could not be run'}
-    return {'ok': result.returncode == 0, 'ip': target}
+        return None
+    if result.returncode != 0:
+        return None
+    ttl_match = re.search(r'ttl[=|:](\\d+)', result.stdout, re.IGNORECASE)
+    ttl = int(ttl_match.group(1)) if ttl_match else 0
+    try:
+        hostname = socket.gethostbyaddr(target)[0]
+    except OSError:
+        hostname = 'Unknown device'
+    device_type, operating_system = classify_device(ttl, hostname)
+    return {'ip': target, 'hostname': hostname, 'os': operating_system, 'type': device_type}
+
+
+def local_network(address):
+    if platform.system() != 'Windows':
+        try:
+            route = subprocess.run(['ip', '-4', 'route', 'show', 'scope', 'link'], capture_output=True, text=True, timeout=3, check=False, creationflags=hidden_flags())
+            for line in route.stdout.splitlines():
+                network = line.split()[0]
+                if '/' in network and ipaddress.ip_address(address) in ipaddress.ip_network(network, strict=False):
+                    route_network = ipaddress.ip_network(network, strict=False)
+                    if route_network.num_addresses <= 1024:
+                        return route_network
+                    return ipaddress.ip_network(f'{address}/24', strict=False)
+        except (OSError, ValueError, IndexError, subprocess.TimeoutExpired):
+            pass
+    return ipaddress.ip_network(f'{address}/24', strict=False)
+
+
+def discover_devices():
+    address = local_ip()
+    try:
+        network = local_network(address)
+    except ValueError:
+        network = ipaddress.ip_network('127.0.0.0/8')
+    mac_addresses = read_neighbour_table()
+    candidates = [str(host) for host in network.hosts()]
+    with concurrent.futures.ThreadPoolExecutor(max_workers=32) as pool:
+        found = [device for device in pool.map(run_ping, candidates) if device]
+    for device in found:
+        device['mac'] = mac_addresses.get(device['ip'], 'unknown')
+    if address not in {device['ip'] for device in found}:
+        found.append({'ip': address, 'mac': 'local', 'hostname': socket.gethostname(), 'os': platform.system(), 'type': 'This computer'})
+    return sorted(found, key=lambda device: ipaddress.ip_address(device['ip']))
+
+
+def ping_device(address):
+    result = run_ping(address)
+    if result is None:
+        return {'ok': False, 'ip': address, 'error': 'No response'}
+    result['ok'] = True
+    return result
 
 
 class Handler(BaseHTTPRequestHandler):
     username = ''
     password_hash = ''
+    settings = load_settings()
     public_index = Path(__file__).resolve().parent / 'public' / 'index.html'
     sessions = set()
 
@@ -215,11 +290,21 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == '/dashboard.html':
             if not self.is_authenticated():
-                self.send_response(302)
-                self.send_header('Location', '/')
-                self.end_headers()
+                self.redirect('/')
                 return
             self.serve_file('dashboard.html')
+            return
+        if self.path == '/remote-alerting.html':
+            if not self.is_authenticated() or not self.settings['remote_alerting_enabled']:
+                self.redirect('/dashboard.html')
+                return
+            self.serve_file('remote-alerting.html')
+            return
+        if self.path == '/api/settings':
+            if not self.is_authenticated():
+                self.send_json({'error': 'Authentication required'}, 401)
+                return
+            self.send_json(self.settings)
             return
         if self.path == '/api/devices':
             if not self.is_authenticated():
@@ -236,10 +321,27 @@ class Handler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
-        if self.path == '/api/ping':
-            if not self.is_authenticated():
-                self.send_json({'error': 'Authentication required'}, 401)
+        if not self.is_authenticated() and self.path != '/api/login':
+            self.send_json({'error': 'Authentication required'}, 401)
+            return
+        if self.path == '/api/settings':
+            try:
+                length = min(int(self.headers.get('Content-Length', '0')), 1024)
+                data = json.loads(self.rfile.read(length))
+                self.settings['remote_alerting_enabled'] = bool(data.get('remote_alerting_enabled', False))
+                save_settings(self.settings)
+            except (ValueError, TypeError, json.JSONDecodeError, OSError):
+                self.send_json({'ok': False, 'error': 'Invalid settings'}, 400)
                 return
+            self.send_json({'ok': True, **self.settings})
+            return
+        if self.path == '/api/alerts':
+            if not self.settings['remote_alerting_enabled']:
+                self.send_json({'ok': False, 'error': 'Remote Alerting is disabled'}, 403)
+                return
+            self.send_json({'ok': False, 'error': 'Companion app is not connected'}, 503)
+            return
+        if self.path == '/api/ping':
             try:
                 length = min(int(self.headers.get('Content-Length', '0')), 1024)
                 data = json.loads(self.rfile.read(length))
@@ -265,17 +367,13 @@ class Handler(BaseHTTPRequestHandler):
             return
         token = secrets.token_urlsafe(32)
         self.sessions.add(token)
-        self.send_json(
-            {'ok': True, 'user': self.username},
-            headers={'Set-Cookie': f'admin_session={token}; HttpOnly; SameSite=Strict; Path=/'},
-        )
+        self.send_json({'ok': True, 'user': self.username}, headers={'Set-Cookie': f'admin_session={token}; HttpOnly; SameSite=Strict; Path=/'})
 
     def is_authenticated(self):
         cookie = self.headers.get('Cookie', '')
         cookies = {
             item.split('=', 1)[0].strip(): item.split('=', 1)[1]
-            for item in cookie.split(';')
-            if '=' in item
+            for item in cookie.split(';') if '=' in item
         }
         return cookies.get('admin_session') in self.sessions
 
@@ -290,6 +388,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def redirect(self, location):
+        self.send_response(302)
+        self.send_header('Location', location)
+        self.end_headers()
 
     def send_json(self, value, status=200, headers=None):
         payload = json.dumps(value).encode('utf-8')
@@ -322,8 +425,7 @@ def configure_windows_startup(service_script: Path, sql_path: Path) -> None:
     startup_dir = Path(os.environ["APPDATA"]) / "Microsoft/Windows/Start Menu/Programs/Startup"
     startup_dir.mkdir(parents=True, exist_ok=True)
     startup_file = startup_dir / "AdminRouter.bat"
-    command = f'start "" /B "{sys.executable}" "{service_script}" "{sql_path}"\n'
-    startup_file.write_text(command, encoding="utf-8")
+    startup_file.write_text(f'start "" /B "{sys.executable}" "{service_script}" "{sql_path}"\n', encoding="utf-8")
 
 
 def configure_linux_startup(service_script: Path, sql_path: Path) -> None:
@@ -333,20 +435,14 @@ def configure_linux_startup(service_script: Path, sql_path: Path) -> None:
         unit_dir.mkdir(parents=True, exist_ok=True)
         unit_file = unit_dir / "adminrouter.service"
         unit_file.write_text(
-            "[Unit]\n"
-            "Description=AdminRouter background service\n\n"
-            "[Service]\n"
-            "Type=simple\n"
-            f"ExecStart={sys.executable} {service_script} {sql_path}\n"
-            "Restart=always\n\n"
-            "[Install]\n"
-            "WantedBy=default.target\n",
+            "[Unit]\nDescription=AdminRouter background service\n\n[Service]\nType=simple\n"
+            f"ExecStart={sys.executable} {service_script} {sql_path}\nRestart=always\n\n"
+            "[Install]\nWantedBy=default.target\n",
             encoding="utf-8",
         )
         subprocess.run([systemd, "--user", "daemon-reload"], check=False)
         subprocess.run([systemd, "--user", "enable", "adminrouter.service"], check=False)
         return
-
     command = f'@reboot {sys.executable} {service_script} {sql_path}'
     current = subprocess.run(["crontab", "-l"], check=False, capture_output=True, text=True)
     lines = [] if current.returncode else current.stdout.splitlines()
@@ -359,16 +455,12 @@ def run_in_background_now(service_script: Path, sql_path: Path, port: int, log_p
     with open(log_path, "ab") as log_file:
         if platform.system() == "Windows":
             subprocess.Popen(
-                [sys.executable, str(service_script), str(sql_path)],
-                stdout=log_file,
-                stderr=log_file,
+                [sys.executable, str(service_script), str(sql_path)], stdout=log_file, stderr=log_file,
                 creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
             )
         else:
             subprocess.Popen(
-                [sys.executable, str(service_script), str(sql_path)],
-                stdout=log_file,
-                stderr=log_file,
+                [sys.executable, str(service_script), str(sql_path)], stdout=log_file, stderr=log_file,
                 start_new_session=True,
             )
     deadline = time.monotonic() + 3
@@ -382,11 +474,8 @@ def run_in_background_now(service_script: Path, sql_path: Path, port: int, log_p
 
 
 def install_packages_if_requested() -> None:
-    if not prompt_yes_no(
-        "Install optional packages (flask, bcrypt, zeroconf)?"
-    ):
-        return
-    subprocess.run([sys.executable, "-m", "pip", "install", *PACKAGE_SET], check=False)
+    if prompt_yes_no("Install optional packages (flask, bcrypt, zeroconf)?"):
+        subprocess.run([sys.executable, "-m", "pip", "install", *PACKAGE_SET], check=False)
 
 
 def parse_port(value: str) -> int:
@@ -421,8 +510,8 @@ def get_runtime_dir() -> Path:
 def print_setup_header() -> None:
     width = 72
     print("\033[2J\033[H\033[44m\033[97m", end="")
-    print(' AdminRouter setup '.center(width))
-    print('Configure the admin login and web port'.center(width))
+    print(" AdminRouter setup ".center(width))
+    print("Configure the admin login and web port".center(width))
     print(" " * width)
 
 
@@ -430,19 +519,15 @@ def main() -> int:
     if not is_supported_platform():
         print("This installer only supports Windows or Linux terminals.")
         return 1
-
     enable_terminal_colors()
     print_setup_header()
     install_packages_if_requested()
-
     username = input(setup_prompt("Username: ")).strip()
     while not username:
         username = input(setup_prompt("Username cannot be empty. Username: ")).strip()
-
     password = getpass.getpass(setup_prompt("Password: "))
     while not password:
         password = getpass.getpass(setup_prompt("Password cannot be empty. Password: "))
-
     port_text = input(setup_prompt("Port to run on: ")).strip()
     while True:
         try:
@@ -451,7 +536,6 @@ def main() -> int:
         except ValueError as exc:
             print(str(exc))
             port_text = input(setup_prompt("Port to run on: ")).strip()
-
     root = Path(__file__).resolve().parent
     runtime_dir = get_runtime_dir()
     runtime_dir.mkdir(parents=True, exist_ok=True)
@@ -459,15 +543,12 @@ def main() -> int:
     sql_path = runtime_dir / "adminrouter_config.sql"
     service_script = runtime_dir / "adminrouter_service.py"
     log_path = runtime_dir / "adminrouter.log"
-
     generate_sql_file(sql_path, username, hash_password(password), port)
     create_service_script(service_script)
-
     if platform.system() == "Windows":
         configure_windows_startup(service_script, sql_path)
     else:
         configure_linux_startup(service_script, sql_path)
-
     print(f"Files stored in {runtime_dir}")
     running = run_in_background_now(service_script, sql_path, port, log_path)
     print("AdminRouter has been configured to run in background on startup.")

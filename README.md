@@ -8,8 +8,14 @@ The username and password entered during setup are the **admin login** for the
 web page.
 
 After login, AdminRouter opens a dashboard at `/dashboard.html`. The Devices
-tab reads the local ARP/neighbour table and provides a ping button for each
-address it finds. The Automation tab is present but marked **Coming soon**.
+tab scans the local IPv4 subnet and provides a hidden ping check for each
+responding address. It shows best-effort OS and device-type guesses. The
+Automation tab is present but marked **Coming soon**.
+
+Settings includes a Remote Alerting switch. When enabled, the Remote Alerting
+tab appears. The server endpoint is ready for a companion client, but native
+Windows `.exe` and Android apps are not included yet, so alerts currently
+report that no companion app is connected.
 
 ## Requirements
 
@@ -151,8 +157,10 @@ rm -rf "$HOME/.local/share/AdminRouter"
   can open the printed address. Use a firewall if it should stay private.
 - The login page is served from `public/index.html`.
 - The dashboard is served from `public/dashboard.html` after admin login.
-- Device discovery depends on the operating system ARP/neighbour table. It
-  cannot see devices that the operating system has not learned about.
-- Ping uses the system `ping` command. On minimal Linux installations, install
-  the package that provides `ping` if the button reports that ping is unavailable.
+- Device discovery scans the local IPv4 route. Larger or segmented networks
+  may still need a proper network scanner and will not all be covered.
+- OS and device type are estimates based on ping TTL and reverse-DNS names;
+  they cannot reliably distinguish every iPhone, Android, laptop, or server.
+- Ping runs invisibly in the service process. On minimal Linux installations,
+  install the package that provides `ping` if the button reports no response.
 - The installer supports Windows and Linux only.

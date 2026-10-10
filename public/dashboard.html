@@ -15,7 +15,7 @@
     .tabs { display: flex; gap: 4px; margin-bottom: 22px; border-bottom: 1px solid #d8cdc3; }
     .tab { padding: 12px 18px; border: 0; border-bottom: 3px solid transparent; color: #78695e; background: transparent; cursor: pointer; font: inherit; font-weight: 700; }
     .tab.active { border-bottom-color: #a75236; color: #352820; }
-    .panel { padding: 26px; border: 1px solid #ded3c9; border-radius: 10px; background: #fffdf9; box-shadow: 0 8px 30px rgba(66, 48, 36, .07); }
+    .panel { padding: 26px; border: 1px solid #ded3c9; background: #fffdf9; }
     .panel h2 { margin: 0 0 6px; font-size: 23px; }
     .panel p { margin: 0 0 22px; color: #78695e; }
     .status { min-height: 20px; margin: 0 0 14px; color: #a75236; font-size: 13px; }
@@ -24,7 +24,7 @@
     th, td { padding: 14px 12px; border-bottom: 1px solid #eee6df; white-space: nowrap; }
     th { color: #78695e; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
     td { font-size: 14px; }
-    .ping { padding: 8px 13px; border: 0; border-radius: 7px; color: #fff; background: #a75236; cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; }
+    .ping { padding: 8px 13px; border: 0; color: #fff; background: #a75236; cursor: pointer; font: inherit; font-size: 13px; font-weight: 700; }
     .ping:hover { background: #7f3f2e; }
     .result { color: #55715a; font-size: 13px; }
     .empty { padding: 22px 0; color: #78695e; }
@@ -46,36 +46,55 @@
     <nav class="tabs" aria-label="Dashboard sections">
       <button class="tab active" data-panel="devices-panel">Devices</button>
       <button class="tab" data-panel="automation-panel">Automation</button>
+      <button id="remote-tab" class="tab" data-panel="remote-panel" hidden>Remote Alerting</button>
+      <button class="tab" data-panel="settings-panel">Settings</button>
     </nav>
     <section id="devices-panel" class="panel">
       <h2>Connected devices</h2>
-      <p>Devices currently visible in the local network table.</p>
+      <p>Devices found by scanning the local IPv4 subnet.</p>
       <div id="status" class="status" role="status"></div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Address</th><th>Hardware address</th><th>Name</th><th>Check</th></tr></thead>
-          <tbody id="device-list"><tr><td colspan="4" class="empty">Loading...</td></tr></tbody>
+          <thead><tr><th>Address</th><th>Type</th><th>OS</th><th>Hardware address</th><th>Check</th></tr></thead>
+          <tbody id="device-list"><tr><td colspan="5" class="empty">Scanning local subnet...</td></tr></tbody>
         </table>
       </div>
     </section>
     <section id="automation-panel" class="panel coming-soon" hidden>
       <div><strong>Automation</strong><span>Coming soon. Saved network actions will live here.</span></div>
     </section>
+    <section id="remote-panel" class="panel" hidden>
+      <h2>Remote Alerting</h2>
+      <p>Send alerts through a connected desktop or Android companion app.</p>
+      <div id="remote-status" class="status">No companion app is connected.</div>
+      <button id="test-alert" class="ping" type="button">Send test alert</button>
+    </section>
+    <section id="settings-panel" class="panel" hidden>
+      <h2>Settings</h2>
+      <p>Choose which dashboard features are visible.</p>
+      <label><input id="remote-enabled" type="checkbox"> Enable Remote Alerting</label>
+      <button id="save-settings" class="ping" type="button">Save settings</button>
+      <div id="settings-status" class="status" role="status"></div>
+    </section>
   </main>
   <script>
     const list = document.getElementById('device-list');
     const count = document.getElementById('device-count');
     const status = document.getElementById('status');
+    const remoteTab = document.getElementById('remote-tab');
+    const remoteEnabled = document.getElementById('remote-enabled');
+    const settingsStatus = document.getElementById('settings-status');
 
     function renderDevices(devices) {
       count.textContent = `${devices.length} device${devices.length === 1 ? '' : 's'} found`;
       list.innerHTML = devices.length ? devices.map((device) => `
         <tr>
           <td>${device.ip}</td>
+          <td>${device.type || 'Unknown'}</td>
+          <td>${device.os || 'Unknown'}</td>
           <td>${device.mac}</td>
-          <td>${device.name}</td>
           <td><button class="ping" data-ip="${device.ip}">Ping</button> <span class="result" data-result="${device.ip}"></span></td>
-        </tr>`).join('') : '<tr><td colspan="4" class="empty">No network devices were found.</td></tr>';
+        </tr>`).join('') : '<tr><td colspan="5" class="empty">No network devices were found.</td></tr>';
       document.querySelectorAll('.ping').forEach((button) => button.addEventListener('click', () => ping(button)));
     }
 
@@ -87,9 +106,40 @@
         renderDevices(data.devices || []);
       } catch (error) {
         status.textContent = 'Could not load devices. Check the service log.';
-        list.innerHTML = '<tr><td colspan="4" class="empty">Device discovery failed.</td></tr>';
+        list.innerHTML = '<tr><td colspan="5" class="empty">Device discovery failed.</td></tr>';
       }
     }
+
+    async function loadSettings() {
+      const response = await fetch('/api/settings');
+      if (response.status === 401) { window.location.href = '/'; return; }
+      const settings = await response.json();
+      remoteEnabled.checked = settings.remote_alerting_enabled === true;
+      remoteTab.hidden = !remoteEnabled.checked;
+    }
+
+    document.getElementById('save-settings').addEventListener('click', async () => {
+      settingsStatus.textContent = 'Saving...';
+      const response = await fetch('/api/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ remote_alerting_enabled: remoteEnabled.checked })
+      });
+      if (response.ok) {
+        remoteTab.hidden = !remoteEnabled.checked;
+        settingsStatus.textContent = remoteEnabled.checked ? 'Remote Alerting enabled.' : 'Remote Alerting disabled.';
+      } else {
+        settingsStatus.textContent = 'Settings could not be saved.';
+      }
+    });
+
+    document.getElementById('test-alert').addEventListener('click', async () => {
+      const response = await fetch('/api/alerts', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: 'AdminRouter test alert' })
+      });
+      const result = await response.json();
+      document.getElementById('remote-status').textContent = result.error || 'Alert sent.';
+    });
 
     async function ping(button) {
       const result = document.querySelector(`[data-result="${button.dataset.ip}"]`);
@@ -112,6 +162,7 @@
       tab.classList.add('active');
     }));
     loadDevices();
+    loadSettings();
   </script>
 </body>
 </html>
