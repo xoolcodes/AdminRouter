@@ -17,7 +17,7 @@ jobs:
         run: |
           $opts = @('--onefile', '--noconsole', '--name', 'AlertingClient')
           
-          # Combine multiple sizes into a single proper multi-res .ico for PyInstaller if they exist
+          # Combine multiple sizes into a single proper multi-res .ico for PyInstaller
           if ((Test-Path 'icon_16x16.ico') -and (Test-Path 'icon_32x32.ico') -and (Test-Path 'icon_48x48.ico')) {
             python -c "
             from PIL import Image
@@ -26,7 +26,7 @@ jobs:
             img48 = Image.open('icon_48x48.ico')
             img48.save('combined_icon.ico', format='ICO', append_images=[img32, img16])
             "
-            $opts += @('--icon', 'combined_icon.ico', '--add-data', 'combined_icon.ico;.')
+            $opts += @('--icon', 'combined_icon.ico')
           }
           
           pyinstaller @opts alerting_client.py
