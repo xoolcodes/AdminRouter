@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AdminRouter | Admin sign in</title>
+  <style>
+    :root {
+      color-scheme: light;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: #071a3d;
+      color: #102044;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: linear-gradient(135deg, #061637 0%, #0b3e87 52%, #147bb5 100%);
+    }
+
+    .shell {
+      width: min(100%, 430px);
+      overflow: hidden;
+      border: 1px solid rgba(255, 255, 255, .22);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, .97);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, .3);
+    }
+
+    .brand {
+      padding: 32px 34px 28px;
+      color: #fff;
+      background: linear-gradient(135deg, #08245a, #0c6ea8);
+    }
+
+    .mark {
+      display: inline-grid;
+      width: 42px;
+      height: 42px;
+      margin-bottom: 18px;
+      place-items: center;
+      border: 1px solid rgba(255, 255, 255, .35);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, .12);
+      font-size: 20px;
+      font-weight: 700;
+    }
+
+    h1 { margin: 0; font-size: 28px; letter-spacing: 0; }
+    .subtitle { margin: 8px 0 0; color: #cfe8ff; font-size: 14px; }
+    .content { padding: 30px 34px 34px; }
+    label { display: block; margin: 0 0 7px; color: #30466d; font-size: 13px; font-weight: 700; }
+    input {
+      width: 100%;
+      margin-bottom: 19px;
+      padding: 13px 14px;
+      border: 1px solid #c7d3e5;
+      border-radius: 9px;
+      color: #102044;
+      background: #f8fbff;
+      font: inherit;
+    }
+    input:focus { outline: 3px solid #b8e5ff; border-color: #1684bf; }
+    button {
+      width: 100%;
+      padding: 13px 16px;
+      border: 0;
+      border-radius: 9px;
+      color: #fff;
+      background: #0b67a3;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+    }
+    button:hover { background: #084f82; }
+    button:disabled { cursor: wait; opacity: .7; }
+    .message { min-height: 22px; margin: 0 0 14px; color: #a22828; font-size: 13px; }
+    .success { color: #147143; }
+    .dashboard { display: none; }
+    .dashboard h2 { margin: 0 0 8px; color: #102044; font-size: 22px; }
+    .dashboard p { margin: 0; color: #526786; line-height: 1.5; }
+    .footer { margin-top: 24px; color: #7b8ba5; font-size: 12px; text-align: center; }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="brand">
+      <div class="mark" aria-hidden="true">A</div>
+      <h1>AdminRouter</h1>
+      <p class="subtitle">Administrator access</p>
+    </header>
+    <section class="content">
+      <form id="login-form">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required autofocus>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <p id="message" class="message" role="status"></p>
+        <button id="submit" type="submit">Sign in</button>
+      </form>
+      <section id="dashboard" class="dashboard" aria-live="polite">
+        <h2>Signed in</h2>
+        <p>Welcome, <strong id="signed-in-user"></strong>. Your AdminRouter session is active.</p>
+      </section>
+      <p class="footer">AdminRouter local administration</p>
+    </section>
+  </main>
+  <script>
+    const form = document.getElementById('login-form');
+    const message = document.getElementById('message');
+    const button = document.getElementById('submit');
+    const dashboard = document.getElementById('dashboard');
+
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      message.textContent = '';
+      message.className = 'message';
+      button.disabled = true;
+      try {
+        const response = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            username: form.username.value,
+            password: form.password.value
+          })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Sign in failed');
+        form.style.display = 'none';
+        document.getElementById('signed-in-user').textContent = result.user;
+        dashboard.style.display = 'block';
+        message.textContent = 'Signed in successfully.';
+        message.className = 'message success';
+      } catch (error) {
+        message.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

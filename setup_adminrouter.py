@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 import getpass
 import hashlib
+import hmac
+import json
 import os
 import platform
+import secrets
 import shutil
 import sqlite3
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -38,6 +42,22 @@ def hash_password(password: str) -> str:
     return f"pbkdf2_sha256${PBKDF2_ITERATIONS}${salt}${digest}"
 
 
+def verify_password(password: str, stored_hash: str) -> bool:
+    try:
+        algorithm, iterations_text, salt, expected = stored_hash.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        digest = hashlib.pbkdf2_hmac(
+            "sha256",
+            password.encode("utf-8"),
+            bytes.fromhex(salt),
+            int(iterations_text),
+        ).hex()
+    except (TypeError, ValueError):
+        return False
+    return hmac.compare_digest(digest, expected)
+
+
 def sql_escape(value: str) -> str:
     return value.replace("'", "''")
 
@@ -61,10 +81,13 @@ def generate_sql_file(path: Path, username: str, password_hash: str, port: int) 
 
 def create_service_script(path: Path) -> None:
     script = '''#!/usr/bin/env python3
+import hashlib
+import hmac
 import json
+import secrets
 import sqlite3
 import sys
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 
@@ -80,24 +103,104 @@ def load_config(sql_path: Path):
     return row
 
 
+def verify_password(password, stored_hash):
+    try:
+        algorithm, iterations_text, salt, expected = stored_hash.split('$', 3)
+        if algorithm != 'pbkdf2_sha256':
+            return False
+        digest = hashlib.pbkdf2_hmac(
+            'sha256',
+            password.encode('utf-8'),
+            bytes.fromhex(salt),
+            int(iterations_text),
+        ).hex()
+    except (TypeError, ValueError):
+        return False
+    return hmac.compare_digest(digest, expected)
+
+
 class Handler(BaseHTTPRequestHandler):
     username = ''
+    password_hash = ''
+    public_index = Path(__file__).resolve().parent / 'public' / 'index.html'
+    sessions = set()
 
     def do_GET(self):
-        payload = json.dumps({'status': 'ok', 'user': self.username}).encode('utf-8')
+        if self.path in {'/', '/index.html'}:
+            self.serve_index()
+            return
+        if self.path == '/api/status':
+            if not self.is_authenticated():
+                self.send_json({'authenticated': False}, 401)
+                return
+            self.send_json({'authenticated': True, 'user': self.username})
+            return
+        self.send_error(404)
+
+    def do_POST(self):
+        if self.path != '/api/login':
+            self.send_error(404)
+            return
+        try:
+            length = min(int(self.headers.get('Content-Length', '0')), 4096)
+            data = json.loads(self.rfile.read(length))
+            username = str(data.get('username', ''))
+            password = str(data.get('password', ''))
+        except (ValueError, TypeError, json.JSONDecodeError):
+            self.send_json({'ok': False, 'error': 'Invalid request'}, 400)
+            return
+        if not hmac.compare_digest(username, self.username) or not verify_password(password, self.password_hash):
+            self.send_json({'ok': False, 'error': 'Invalid username or password'}, 401)
+            return
+        token = secrets.token_urlsafe(32)
+        self.sessions.add(token)
+        self.send_json(
+            {'ok': True, 'user': self.username},
+            headers={'Set-Cookie': f'admin_session={token}; HttpOnly; SameSite=Strict; Path=/'},
+        )
+
+    def is_authenticated(self):
+        cookie = self.headers.get('Cookie', '')
+        cookies = {
+            item.split('=', 1)[0].strip(): item.split('=', 1)[1]
+            for item in cookie.split(';')
+            if '=' in item
+        }
+        return cookies.get('admin_session') in self.sessions
+
+    def serve_index(self):
+        try:
+            payload = self.public_index.read_bytes()
+        except OSError:
+            self.send_error(500, 'public/index.html is missing')
+            return
         self.send_response(200)
-        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.send_header('Content-Length', str(len(payload)))
         self.end_headers()
         self.wfile.write(payload)
+
+    def send_json(self, value, status=200, headers=None):
+        payload = json.dumps(value).encode('utf-8')
+        self.send_response(status)
+        self.send_header('Content-Type', 'application/json; charset=utf-8')
+        self.send_header('Content-Length', str(len(payload)))
+        for name, value in (headers or {}).items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, format, *args):
+        return
 
 
 if __name__ == '__main__':
     if len(sys.argv) != 2:
         raise SystemExit('Usage: adminrouter_service.py <config.sql>')
-    username, _, port = load_config(Path(sys.argv[1]))
+    username, password_hash, port = load_config(Path(sys.argv[1]))
     Handler.username = username
-    server = HTTPServer(('0.0.0.0', int(port)), Handler)
+    Handler.password_hash = password_hash
+    server = ThreadingHTTPServer(('0.0.0.0', int(port)), Handler)
     server.serve_forever()
 '''
     path.write_text(script, encoding="utf-8")
@@ -161,7 +264,7 @@ def run_in_background_now(service_script: Path, sql_path: Path) -> None:
 
 def install_packages_if_requested() -> None:
     if not prompt_yes_no(
-        "Do you want to install packages for web server, hashing, and Windows network listing support?"
+        "Install optional packages (flask, bcrypt, zeroconf)?"
     ):
         return
     subprocess.run([sys.executable, "-m", "pip", "install", *PACKAGE_SET], check=False)
@@ -175,6 +278,17 @@ def parse_port(value: str) -> int:
     if port <= 0 or port > 65535:
         raise ValueError("Port must be between 1 and 65535")
     return port
+
+
+def get_local_ip() -> str:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        sock.connect(("8.8.8.8", 80))
+        return sock.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+    finally:
+        sock.close()
 
 
 def main() -> int:
@@ -216,6 +330,7 @@ def main() -> int:
     run_in_background_now(service_script, sql_path)
     print(f"Created {sql_path}")
     print("AdminRouter has been configured to run in background on startup.")
+    print(f"AdminRouter accessible at http://{get_local_ip()}:{port}")
     return 0
 
 

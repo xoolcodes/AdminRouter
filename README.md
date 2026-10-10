@@ -1,27 +1,29 @@
 # AdminRouter
 
-AdminRouter is a small Python HTTP service installer for Windows and Linux.
-The core service uses only Python's standard library and SQLite. Optional
-packages are not required for the generated service.
+A small Python admin login service for Windows and Linux. It uses Python's
+standard library and SQLite, so the basic setup does not need Flask or any
+other package.
+
+The username and password entered during setup are the **admin login** for the
+web page.
 
 ## Requirements
 
-- Windows 10/11 or Linux with Python 3.8 or newer.
-- A user account that can create files in the project directory.
-- One unused TCP port, for example `8080`.
+- Python 3.8 or newer
+- Windows 10/11 or Linux
+- An unused port, such as `8080`
 
-For a low-spec computer, answer `n` when the installer asks to install
-optional packages. The core service does not require Flask, bcrypt, or
-zeroconf. Keep the port local or protected by your firewall when possible.
+For an older or low-spec computer, answer `n` when setup asks about optional
+packages. The basic service does not need them.
 
-## Windows Command Prompt
+## Windows: Command Prompt
 
-These commands are for **Command Prompt (`cmd.exe`)**, not PowerShell. Run
-each command on its own line.
+These commands use Command Prompt (`cmd.exe`), not PowerShell.
 
 ### Install Python and Git without winget
 
 ```cmd
+mkdir "%USERPROFILE%\Downloads" 2>nul
 cd /d "%USERPROFILE%\Downloads"
 curl.exe -L -o python-installer.exe https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe
 start /wait "" python-installer.exe /quiet InstallAllUsers=0 PrependPath=1 Include_test=0
@@ -29,43 +31,38 @@ curl.exe -L -o git-installer.exe https://github.com/git-for-windows/git/releases
 start /wait "" git-installer.exe /VERYSILENT /NORESTART
 ```
 
-Close Command Prompt and open a new one so Windows reloads `PATH`. Confirm
-the installations:
+Close Command Prompt and open a new one so Windows reloads `PATH`. Then run:
 
 ```cmd
 git --version
 py --version
-```
-
-If `Downloads` does not exist, create it first:
-
-```cmd
-mkdir "%USERPROFILE%\Downloads"
-```
-
-### Download and run
-
-```cmd
 cd /d "%USERPROFILE%\Downloads"
 git clone https://github.com/xoolcodes/AdminRouter.git
 cd AdminRouter
 py setup_adminrouter.py
 ```
 
-If `py` is unavailable but `python` works, use:
+If `py` is not available but `python` is, run:
 
 ```cmd
 python setup_adminrouter.py
 ```
 
-During setup, answer `n` for optional packages on low-spec systems, then
-provide a username, password, and port. The installer creates
-`adminrouter_config.sql` and `adminrouter_service.py`, starts the service,
-and adds `AdminRouter.bat` to the Windows Startup folder.
+When setup finishes, it prints a line like this:
 
-### Windows without Git
+```text
+AdminRouter accessible at http://192.168.1.25:8080
+```
 
-Git is optional for downloading a release snapshot. From Command Prompt:
+Open that address in a browser. Use the username and password you entered
+while configuring the installer. On the same computer, `http://127.0.0.1:8080`
+will also work when the selected port is `8080`.
+
+The service starts immediately and is added to the Windows Startup folder.
+
+### Download without Git
+
+If Git is not available, download the project ZIP from Command Prompt:
 
 ```cmd
 cd /d "%USERPROFILE%\Downloads"
@@ -74,9 +71,6 @@ tar -xf AdminRouter.zip
 cd AdminRouter-main
 py setup_adminrouter.py
 ```
-
-If `curl.exe` or `tar` is unavailable, install Python and Git from their
-official installers, then use the Git commands above.
 
 ## Linux
 
@@ -101,33 +95,45 @@ cd AdminRouter
 python3 setup_adminrouter.py
 ```
 
-For a low-spec Linux computer, answer `n` for optional packages. If
-`systemctl --user` is available, the installer enables a user systemd service.
-Otherwise it adds a user crontab entry. The service is also started
-immediately after setup.
+Setup prints the address to open, for example:
 
-## What the installer does
+```text
+AdminRouter accessible at http://192.168.1.25:8080
+```
 
-1. Optionally offers to install `flask`, `bcrypt`, and `zeroconf`.
-2. Prompts for a username, password, and port.
-3. Stores a salted PBKDF2-HMAC-SHA256 password hash in the generated SQL file.
-4. Generates `adminrouter_service.py` and `adminrouter_config.sql`.
-5. Starts the service and configures startup execution for Windows or Linux.
+If user systemd is available, AdminRouter is enabled as a user service. If it
+is not available, setup uses a user crontab entry instead. It also starts the
+service immediately.
 
-## Limitations
+## Updating
 
-- This project supports Windows and Linux only.
-- It is a small starter HTTP service, not a complete production web server.
-- The service listens on `0.0.0.0`; use a firewall or a local-only setup if it
-	should not be reachable from other machines.
-- The installer does not provide an automatic uninstall command.
+Stop the current service before updating the files.
 
-## Uninstall
+On Windows Command Prompt, run from the AdminRouter folder:
 
-Stop the running Python service first, then remove the generated files and
-startup entry.
+```cmd
+wmic process where "CommandLine like '%%adminrouter_service.py%%'" call terminate
+git pull --ff-only
+py setup_adminrouter.py
+```
 
-On Windows Command Prompt:
+On Linux, run from the AdminRouter folder:
+
+```bash
+systemctl --user disable --now adminrouter.service 2>/dev/null || true
+git pull --ff-only
+python3 setup_adminrouter.py
+```
+
+Use the same admin username, password, and port if you want to keep the same
+login and address. Setup writes a new configuration and starts the updated
+service.
+
+## Uninstalling
+
+Stop the service, then remove the generated files and startup entry.
+
+Windows Command Prompt:
 
 ```cmd
 wmic process where "CommandLine like '%%adminrouter_service.py%%'" call terminate
@@ -135,7 +141,7 @@ del "%APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup\AdminRouter.bat"
 del adminrouter_config.sql adminrouter_service.py
 ```
 
-On Linux:
+Linux:
 
 ```bash
 systemctl --user disable --now adminrouter.service 2>/dev/null || true
@@ -143,3 +149,11 @@ rm -f "$HOME/.config/systemd/user/adminrouter.service"
 crontab -l 2>/dev/null | grep -v 'adminrouter_service.py' | crontab -
 rm -f adminrouter_config.sql adminrouter_service.py
 ```
+
+## Limits
+
+- This is a small starter admin service, not a production web server.
+- The service listens on all network interfaces so another device on the LAN
+  can open the printed address. Use a firewall if it should stay private.
+- The login page is served from `public/index.html`.
+- The installer supports Windows and Linux only.
