@@ -78,6 +78,10 @@
     .editor { margin-bottom: 22px; padding: 18px; border: 1px solid var(--accent); }
     .hint { font-size: 12px; color: var(--muted); margin: 4px 0 10px !important; }
     .opts label { display: inline-flex; gap: 6px; margin-right: 18px; }
+    .alert-opts { display: flex; flex-wrap: wrap; gap: 14px 22px; align-items: center; margin: 12px 0; }
+    .alert-opts label, .row label { display: inline-flex; gap: 8px; align-items: center; font-size: 13px; font-weight: 700; }
+    input[type=color] { width: 42px; height: 30px; padding: 0; border: 1px solid var(--line); background: none; cursor: pointer; }
+    .preview { margin: 8px 0 14px; padding: 22px; text-align: center; font-weight: 700; border: 1px solid var(--line); overflow-wrap: anywhere; }
     /* classic look */
     [data-theme="classic"] header { border-bottom: 2px solid #000; }
     [data-theme="classic"] .panel, [data-theme="classic"] .rule, [data-theme="classic"] .row, [data-theme="classic"] .editor { border: 2px solid; border-color: #fff #404040 #404040 #fff; box-shadow: inset -1px -1px #808080; }
@@ -160,7 +164,19 @@
       <label class="field">Alert message
         <input id="alert-message" type="text" maxlength="500" value="AdminRouter test alert">
       </label>
-      <div id="remote-status" class="status" role="status">No companion app is connected.</div>
+      <div class="alert-opts">
+        <label>Font colour <input id="alert-fg" type="color" value="#000000"></label>
+        <label>Background <input id="alert-bg" type="color" value="#ffffff"></label>
+        <label><input id="alert-full" type="checkbox"> Full screen</label>
+        <label><input id="alert-lock" type="checkbox"> Unexitable</label>
+        <label>Goes away
+          <select id="alert-dismiss"><option value="timer">after a timer</option><option value="button">with a hide button</option></select>
+        </label>
+        <label id="alert-duration-wrap">Seconds <input id="alert-duration" type="number" min="1" max="3600" value="10" style="width:90px"></label>
+      </div>
+      <div id="alert-preview" class="preview">Preview</div>
+      <p id="alert-hint" class="hint"></p>
+      <div id="remote-status" class="status" role="status"></div>
       <button id="test-alert" class="btn" type="button">Send alert</button>
     </section>
 
@@ -175,9 +191,15 @@
       </div>
       <h4>Features</h4>
       <label><input id="remote-enabled" type="checkbox"> Enable Remote Alerting</label>
-      <p></p>
+      <h4>Alerts</h4>
+      <label class="field">Catch-up alerts
+        <input id="alert-catchup" type="number" min="0" max="100" value="0" style="width:90px">
+      </label>
+      <p class="hint">How many recent alerts a device shows when it connects. 0 means it only shows new alerts.</p>
       <button id="save-settings" class="btn" type="button">Save settings</button>
       <div id="settings-status" class="status" role="status"></div>
+      <h4>Connected clients</h4>
+      <div id="client-list"><div class="empty">No clients connected.</div></div>
     </section>
   </main>
 
@@ -250,6 +272,7 @@
       const s = await api('/api/settings');
       $('remote-enabled').checked = s.remote_alerting_enabled === true;
       $('remote-tab').hidden = !$('remote-enabled').checked;
+      $('alert-catchup').value = s.alert_catchup ?? 0;
       applyTheme(s.ui_theme || 'original');
     }
 
@@ -257,7 +280,7 @@
       $('settings-status').textContent = 'Saving...';
       const theme = (document.querySelector('input[name=theme]:checked') || {}).value || 'original';
       try {
-        await api('/api/settings', 'POST', { remote_alerting_enabled: $('remote-enabled').checked, ui_theme: theme });
+        await api('/api/settings', 'POST', { remote_alerting_enabled: $('remote-enabled').checked, ui_theme: theme, alert_catchup: parseInt($('alert-catchup').value, 10) || 0 });
         applyTheme(theme);
         $('remote-tab').hidden = !$('remote-enabled').checked;
         $('settings-status').textContent = 'Settings saved.';
@@ -268,15 +291,61 @@
     document.querySelectorAll('input[name=theme]').forEach((r) => r.addEventListener('change', () => applyTheme(r.value)));
 
     /* ---------- remote alerting ---------- */
+    function alertOptions() {
+      const lock = $('alert-lock').checked;
+      return {
+        fg: $('alert-fg').value, bg: $('alert-bg').value, fullscreen: $('alert-full').checked,
+        unexitable: lock, dismiss: lock ? 'timer' : $('alert-dismiss').value,
+        duration: parseInt($('alert-duration').value, 10) || 10
+      };
+    }
+    function syncAlertUI() {
+      const lock = $('alert-lock').checked;
+      if (lock) $('alert-dismiss').value = 'timer';
+      $('alert-dismiss').disabled = lock;
+      $('alert-duration').max = lock ? 600 : 3600;
+      $('alert-duration-wrap').hidden = $('alert-dismiss').value === 'button';
+      const preview = $('alert-preview');
+      preview.style.background = $('alert-bg').value;
+      preview.style.color = $('alert-fg').value;
+      preview.textContent = $('alert-message').value || 'Preview';
+      $('alert-hint').textContent = lock
+        ? 'Unexitable alerts hide the mouse and block keys, so they always close on a timer (max 600 seconds). You can also disconnect the device from Settings.'
+        : '';
+    }
+    ['input', 'change'].forEach((ev) => ['alert-fg', 'alert-bg', 'alert-full', 'alert-lock', 'alert-dismiss', 'alert-duration', 'alert-message']
+      .forEach((id) => $(id).addEventListener(ev, syncAlertUI)));
+    syncAlertUI();
     $('test-alert').addEventListener('click', async () => {
       const message = $('alert-message').value.trim();
       if (!message) { $('remote-status').textContent = 'Type a message first.'; return; }
+      if ($('alert-lock').checked && !confirm('Send an unexitable alert? Connected devices will lose mouse and keyboard until the timer ends.')) return;
       try {
-        await api('/api/alerts', 'POST', { message });
+        await api('/api/alerts', 'POST', { message, ...alertOptions() });
         $('remote-status').textContent = 'Alert sent.';
       } catch (e) {
         $('remote-status').textContent = e.message;
       }
+    });
+
+    /* ---------- connected clients ---------- */
+    function renderClients(list) {
+      $('client-list').innerHTML = list.length ? `<div class="table-wrap"><table>
+        <thead><tr><th>Device</th><th>Address</th><th>Username</th><th>Status</th><th>Last seen</th><th></th></tr></thead>
+        <tbody>${list.map((c) => `<tr>
+          <td>${esc(c.name)}</td><td>${esc(c.ip)}</td><td>${esc(c.username)}</td><td>${esc(c.status)}</td>
+          <td>${esc(new Date(c.last_seen * 1000).toLocaleTimeString())}</td>
+          <td>${c.status === 'disconnected' ? '' : `<button class="btn small danger" data-key="${esc(c.key)}">Disconnect</button>`}</td>
+        </tr>`).join('')}</tbody></table></div>` : '<div class="empty">No clients connected.</div>';
+    }
+    async function refreshClients() {
+      try { renderClients((await api('/api/clients')).clients); } catch (e) { /* ignore */ }
+    }
+    $('client-list').addEventListener('click', async (event) => {
+      const btn = event.target.closest('[data-key]');
+      if (!btn || !confirm('Disconnect this client? It will also close any alert it is showing.')) return;
+      try { renderClients((await api('/api/clients/disconnect', 'POST', { key: btn.dataset.key })).clients); }
+      catch (e) { $('settings-status').textContent = e.message; }
     });
 
     /* ---------- automation ---------- */
@@ -285,7 +354,7 @@
     let editor = null;
 
     const blankTrigger = (op = 'AND') => ({ type: 'interval', op, minutes: 5 });
-    const blankAction = (op = 'AND') => ({ type: 'ping_all', op, ips: [], message: 'AdminRouter alert', fail_mode: 'any', fail_count: 1 });
+    const blankAction = (op = 'AND') => ({ type: 'ping_all', op, ips: [], message: 'AdminRouter alert', fail_mode: 'any', fail_count: 1, fg: '#000000', bg: '#ffffff', fullscreen: false, unexitable: false, dismiss: 'timer', duration: 10 });
     const ruleName = (id) => (rules.find((r) => r.id === id) || { name: '(deleted automation)' }).name;
 
     function failText(a) {
@@ -299,7 +368,7 @@
       return `"${ruleName(t.automation_id)}" ${t.on === 'success' ? 'succeeds' : 'fails'}`;
     }
     function describeAction(a) {
-      if (a.type === 'alert') return `send alert "${a.message}"`;
+      if (a.type === 'alert') return `send alert "${a.message}"${a.unexitable ? ' (unexitable)' : a.fullscreen ? ' (full screen)' : ''}`;
       if (a.type === 'ping_all') return `ping all devices (fails if ${failText(a)})`;
       return `ping ${(a.ips || []).length} device(s) (fails if ${failText(a)})`;
     }
@@ -376,7 +445,19 @@
         <option value="ping" ${a.type === 'ping' ? 'selected' : ''}>Ping (select devices)</option>
         <option value="alert" ${a.type === 'alert' ? 'selected' : ''}>Send alert</option></select>`;
       let fields = '';
-      if (a.type === 'alert') fields = `<input type="text" maxlength="500" placeholder="Alert message" data-k="action" data-i="${i}" data-f="message" value="${esc(a.message)}">`;
+      if (a.type === 'alert') {
+        const lock = !!a.unexitable;
+        const at = `data-k="action" data-i="${i}"`;
+        fields = `<input type="text" maxlength="500" placeholder="Alert message" ${at} data-f="message" value="${esc(a.message)}">
+          <label>Font <input type="color" ${at} data-f="fg" value="${esc(a.fg || '#000000')}"></label>
+          <label>Background <input type="color" ${at} data-f="bg" value="${esc(a.bg || '#ffffff')}"></label>
+          <label><input type="checkbox" ${at} data-f="fullscreen" ${a.fullscreen ? 'checked' : ''}> Full screen</label>
+          <label><input type="checkbox" ${at} data-f="unexitable" ${lock ? 'checked' : ''}> Unexitable</label>
+          <select ${at} data-f="dismiss" ${lock ? 'disabled' : ''}>
+            <option value="timer" ${a.dismiss !== 'button' ? 'selected' : ''}>Hide after timer</option>
+            <option value="button" ${a.dismiss === 'button' && !lock ? 'selected' : ''}>Hide with button</option></select>
+          ${lock || a.dismiss !== 'button' ? `<input type="number" min="1" max="${lock ? 600 : 3600}" ${at} data-f="duration" value="${esc(a.duration || 10)}"> s` : ''}`;
+      }
       else {
         if (a.type === 'ping') fields += ipBox(a, i);
         fields += `fails if <select data-k="action" data-i="${i}" data-f="fail_mode">
@@ -432,16 +513,17 @@
         el.closest('details').querySelector('summary').textContent = `${item.ips.length} device(s) selected`;
         return;
       }
-      let value = el.value;
-      if (f === 'minutes' || f === 'fail_count') value = parseInt(value, 10) || 1;
+      let value = el.type === 'checkbox' ? el.checked : el.value;
+      if (f === 'minutes' || f === 'fail_count' || f === 'duration') value = parseInt(value, 10) || 1;
       item[f] = value;
+      if (f === 'unexitable' && value) item.dismiss = 'timer';
       if (event.type !== 'change') return;
       if (f === 'type' && k === 'trigger') {
         if (value === 'interval') item.minutes = item.minutes || 5;
         if (value === 'daily') item.time = item.time || '09:00';
         if (value === 'result') { const o = rules.find((r) => r.id !== editor.id); item.automation_id = o ? o.id : ''; item.on = 'fail'; }
       }
-      if (f === 'type' || f === 'fail_mode') renderEditor();
+      if (['type', 'fail_mode', 'unexitable', 'dismiss'].includes(f)) renderEditor();
     }
     $('editor').addEventListener('input', onField);
     $('editor').addEventListener('change', onField);
@@ -501,8 +583,10 @@
       document.querySelectorAll('main > section').forEach((panel) => { panel.hidden = panel.id !== tab.dataset.panel; });
       tab.classList.add('active');
       if (tab.dataset.panel === 'automation-panel') refreshAutomations();
+      if (tab.dataset.panel === 'settings-panel') refreshClients();
     }));
 
+    setInterval(() => { if (!$('settings-panel').hidden) refreshClients(); }, 5000);
     setInterval(() => { if (!editor && !$('automation-panel').hidden) refreshAutomations(); }, 4000);
     loadDevices();
     loadSettings();

@@ -24,9 +24,13 @@ SETTINGS_PATH = BASE / 'settings.json'
 ALERTS_PATH = BASE / 'alerts.json'
 AUTOMATIONS_PATH = BASE / 'automations.json'
 KNOWN_PATH = BASE / 'known_devices.json'
+CLIENTS_PATH = BASE / 'clients.json'
 DISCOVERY_PORT = 39872
 THEMES = ('original', 'classic', 'futuristic')
 LOCK = threading.RLock()
+COLOR_RE = re.compile(r'^#[0-9a-fA-F]{6}$')
+MAX_LOCK_SECONDS = 600
+CLIENT_ONLINE_SECONDS = 15
 
 
 # --------------------------------------------------------------------------
@@ -60,6 +64,13 @@ def verify_password(password, stored_hash):
 # --------------------------------------------------------------------------
 # Settings / alerts / known devices
 # --------------------------------------------------------------------------
+def clamp_catchup(value):
+    try:
+        return max(0, min(int(value), 100))
+    except (TypeError, ValueError):
+        return 0
+
+
 def load_settings():
     try:
         data = json.loads(SETTINGS_PATH.read_text(encoding='utf-8'))
@@ -73,6 +84,7 @@ def load_settings():
     return {
         'remote_alerting_enabled': bool(data.get('remote_alerting_enabled', False)),
         'ui_theme': theme if theme in THEMES else 'original',
+        'alert_catchup': clamp_catchup(data.get('alert_catchup', 0)),
     }
 
 
@@ -95,7 +107,30 @@ def save_alerts(alerts):
     ALERTS_PATH.write_text(json.dumps(alerts[-100:], indent=2) + '\n', encoding='utf-8')
 
 
-def queue_alert(message):
+def clean_alert_options(raw):
+    """Validate alert styling. Unexitable alerts always use a capped timer."""
+    fg = str(raw.get('fg', ''))
+    bg = str(raw.get('bg', ''))
+    unexitable = bool(raw.get('unexitable', False))
+    dismiss = 'button' if raw.get('dismiss') == 'button' else 'timer'
+    if unexitable:
+        dismiss = 'timer'
+    try:
+        duration = int(raw.get('duration', 10))
+    except (TypeError, ValueError):
+        duration = 10
+    duration = max(1, min(duration, MAX_LOCK_SECONDS if unexitable else 3600))
+    return {
+        'fg': fg if COLOR_RE.match(fg) else '#000000',
+        'bg': bg if COLOR_RE.match(bg) else '#ffffff',
+        'fullscreen': bool(raw.get('fullscreen', False)),
+        'unexitable': unexitable,
+        'dismiss': dismiss,
+        'duration': duration if dismiss == 'timer' else 0,
+    }
+
+
+def queue_alert(message, options=None):
     """Queue an alert for companion apps. Raises if it cannot be queued."""
     if not SETTINGS['remote_alerting_enabled']:
         raise RuntimeError('Remote Alerting is disabled')
@@ -104,7 +139,7 @@ def queue_alert(message):
         raise ValueError('Message is empty')
     with LOCK:
         alerts = load_alerts()
-        alert = {'id': (alerts[-1]['id'] + 1 if alerts else 1), 'message': message, 'created': int(time.time())}
+        alert = {'id': (alerts[-1]['id'] + 1 if alerts else 1), 'message': message, 'created': int(time.time()), **clean_alert_options(options or {})}
         alerts.append(alert)
         save_alerts(alerts)
     return alert
@@ -139,6 +174,105 @@ def known_ips():
 def known_list():
     with LOCK:
         return [{'ip': ip, 'hostname': KNOWN[ip].get('hostname', 'Unknown device')} for ip in known_ips()]
+
+
+# --------------------------------------------------------------------------
+# Connected clients (companion apps)
+# --------------------------------------------------------------------------
+def load_clients():
+    try:
+        data = json.loads(CLIENTS_PATH.read_text(encoding='utf-8'))
+    except (OSError, ValueError):
+        data = {}
+    clients = {}
+    if isinstance(data, dict):
+        for key, c in data.items():
+            if isinstance(c, dict):
+                clients[key] = {'key': key, 'name': str(c.get('name', key)), 'ip': str(c.get('ip', '')), 'username': str(c.get('username', '')),
+                                'first_seen': c.get('first_seen', 0), 'last_seen': 0, 'delivered': c.get('delivered'), 'blocked': bool(c.get('blocked', False))}
+    return clients
+
+
+CLIENTS = load_clients()
+
+
+def save_clients():
+    keep = {k: {f: c[f] for f in ('name', 'ip', 'username', 'first_seen', 'delivered', 'blocked')} for k, c in CLIENTS.items()}
+    try:
+        CLIENTS_PATH.write_text(json.dumps(keep, indent=2) + '\n', encoding='utf-8')
+    except OSError:
+        pass
+
+
+def catchup_floor(alerts, count):
+    """Alert id a new client starts after, so it sees only the last `count` alerts (0 = none)."""
+    if not alerts:
+        return 0
+    if count <= 0:
+        return alerts[-1]['id']
+    return alerts[-count - 1]['id'] if len(alerts) > count else 0
+
+
+def client_poll(key, name, ip, username, connect, after):
+    """Register/refresh a companion client and return (http status, payload)."""
+    with LOCK:
+        client = CLIENTS.get(key)
+        if client is None:
+            client = {'key': key, 'name': name, 'ip': ip, 'username': username, 'first_seen': time.time(), 'last_seen': 0, 'delivered': None, 'blocked': False}
+            CLIENTS[key] = client
+        if client['blocked'] and not connect:
+            return 403, {'error': 'Disconnected by an administrator', 'disconnected': True}
+        changed = False
+        if connect and (client['blocked'] or client['delivered'] is not None):
+            client['blocked'] = False
+            client['delivered'] = None   # a fresh connection gets a fresh catch-up
+            changed = True
+        client.update(name=name, ip=ip, username=username, last_seen=time.time())
+        alerts = load_alerts()
+        latest = alerts[-1]['id'] if alerts else 0
+        if client['delivered'] is None:
+            client['delivered'] = catchup_floor(alerts, SETTINGS['alert_catchup'])
+            changed = True
+        if client['delivered'] > latest:
+            client['delivered'] = latest
+            changed = True
+        if connect:
+            if changed:
+                save_clients()
+            return 200, {'alerts': [], 'latest': latest}
+        floor = max(after, client['delivered'])
+        out = [a for a in alerts if a['id'] > floor]
+        if out:
+            client['delivered'] = out[-1]['id']
+            changed = True
+        if changed:
+            save_clients()
+        return 200, {'alerts': out, 'latest': latest}
+
+
+def clients_snapshot():
+    now = time.time()
+    with LOCK:
+        rows = []
+        for c in CLIENTS.values():
+            if not c['last_seen'] or now - c['last_seen'] > 600:
+                continue
+            if c['blocked']:
+                status = 'disconnected'
+            else:
+                status = 'online' if now - c['last_seen'] <= CLIENT_ONLINE_SECONDS else 'offline'
+            rows.append({'key': c['key'], 'name': c['name'], 'ip': c['ip'], 'username': c['username'], 'status': status, 'last_seen': int(c['last_seen'])})
+        return sorted(rows, key=lambda r: (r['name'].lower(), r['ip']))
+
+
+def disconnect_client(key):
+    with LOCK:
+        client = CLIENTS.get(key)
+        if not client:
+            return False
+        client['blocked'] = True
+        save_clients()
+        return True
 
 
 # --------------------------------------------------------------------------
@@ -293,7 +427,7 @@ def run_action(action):
     kind = action['type']
     if kind == 'alert':
         try:
-            queue_alert(action['message'])
+            queue_alert(action['message'], action)
             return True, f"Alert sent: {action['message']}"
         except Exception as exc:  # noqa: BLE001
             return False, f'Alert failed: {exc}'
@@ -396,6 +530,7 @@ def clean_rule(data, rule_id, other_ids):
             if not message:
                 raise ValueError('Alert message cannot be empty')
             item['message'] = message
+            item.update(clean_alert_options(raw))
         else:
             raise ValueError('Unknown action type')
         actions.append(item)
@@ -622,15 +757,31 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(SETTINGS)
             return
         if path == '/api/alerts':
-            if not self.is_authenticated() and not self.client_authorized():
+            companion = self.client_authorized()
+            if not companion and not self.is_authenticated():
                 self.send_json({'error': 'Authentication required'}, 401)
                 return
             query = parse_qs(urlsplit(self.path).query)
             try:
-                after = int(query.get('after', ['0'])[0])
+                after = max(0, int(query.get('after', ['0'])[0]))
             except ValueError:
                 after = 0
-            self.send_json({'alerts': [alert for alert in load_alerts() if alert['id'] > after]})
+            if not companion:
+                self.send_json({'alerts': [alert for alert in load_alerts() if alert['id'] > after]})
+                return
+            ip = self.client_address[0]
+            raw_key = self.headers.get('X-AdminRouter-Client', '')
+            key = raw_key if re.fullmatch(r'[A-Za-z0-9-]{8,64}', raw_key) else f'ip:{ip}'
+            name = ''.join(ch for ch in self.headers.get('X-AdminRouter-Name', '') if ch.isprintable()).strip()[:60] or ip
+            connect = self.headers.get('X-AdminRouter-Connect') == '1'
+            status, payload = client_poll(key, name, ip, self.headers.get('X-AdminRouter-Username', ''), connect, after)
+            self.send_json(payload, status)
+            return
+        if path == '/api/clients':
+            if not self.is_authenticated():
+                self.send_json({'error': 'Authentication required'}, 401)
+                return
+            self.send_json({'clients': clients_snapshot()})
             return
         if path == '/api/devices':
             if not self.is_authenticated():
@@ -664,6 +815,8 @@ class Handler(BaseHTTPRequestHandler):
                     SETTINGS['remote_alerting_enabled'] = bool(data['remote_alerting_enabled'])
                 if data.get('ui_theme') in THEMES:
                     SETTINGS['ui_theme'] = data['ui_theme']
+                if 'alert_catchup' in data:
+                    SETTINGS['alert_catchup'] = clamp_catchup(data['alert_catchup'])
                 save_settings(SETTINGS)
             except (ValueError, TypeError, OSError):
                 self.send_json({'ok': False, 'error': 'Invalid settings'}, 400)
@@ -676,7 +829,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             try:
                 data = self.read_json(4096)
-                alert = queue_alert(data.get('message', ''))
+                alert = queue_alert(data.get('message', ''), data)
             except (ValueError, TypeError, OSError):
                 self.send_json({'ok': False, 'error': 'Invalid alert (message cannot be empty)'}, 400)
                 return
@@ -690,6 +843,14 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({'ok': False, 'error': 'Invalid request'}, 400)
                 return
             self.send_json(result)
+            return
+        if path == '/api/clients/disconnect':
+            try:
+                found = disconnect_client(str(self.read_json(1024).get('key', '')))
+            except (ValueError, TypeError):
+                self.send_json({'ok': False, 'error': 'Invalid request'}, 400)
+                return
+            self.send_json({'ok': found, 'clients': clients_snapshot()})
             return
         if path.startswith('/api/automations'):
             try:
