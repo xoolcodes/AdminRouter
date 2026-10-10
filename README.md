@@ -105,29 +105,6 @@ service immediately. Generated files are stored in
 `~/.local/share/AdminRouter`; startup and port errors are written to
 `adminrouter.log` there.
 
-## Updating
-
-Stop the current service before updating the files.
-
-On Windows Command Prompt, run from the AdminRouter folder:
-
-```cmd
-wmic process where "CommandLine like '%%adminrouter_service.py%%'" call terminate
-git pull --ff-only
-"%LocalAppData%\Programs\Python\Python312\python.exe" setup_adminrouter.py
-```
-
-On Linux, run from the AdminRouter folder:
-
-```bash
-systemctl --user disable --now adminrouter.service 2>/dev/null || true
-git pull --ff-only
-python3 setup_adminrouter.py
-```
-
-Use the same admin username, password, and port if you want to keep the same
-login and address. Setup writes a new configuration and starts the updated
-service.
 
 ## Windows alerting client
 
@@ -178,7 +155,6 @@ rm -rf "$HOME/.local/share/AdminRouter"
 
 ## Limits
 
-- This is a small starter admin service, not a production web server.
 - The service listens on all network interfaces so another device on the LAN
   can open the printed address. Use a firewall if it should stay private.
 - The login page is served from `public/index.html`.
