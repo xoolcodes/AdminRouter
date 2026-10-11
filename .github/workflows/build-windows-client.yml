@@ -1,28 +1,75 @@
-name: Build Windows client
+name: Build Windows apps
 on:
   workflow_dispatch: {}
   push:
-    paths: ['alerting_client.py', 'icon_16x16.ico', 'icon_32x32.ico', 'icon_48x48.ico', '.github/workflows/build-windows-client.yml']
+    paths:
+      - 'alerting_client.py'
+      - 'alerting_clientpro.py'
+      - 'diagnosticapp.py'
+      - 'dashboardapp.py'
+      - 'sharedUItoolkit.py'
+      - 'mergeicons.py'
+      - '*.ico'
+      - '.github/workflows/build-windows-client.yml'
+
 jobs:
   build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false          # one broken app never stops the others
+      matrix:
+        include:
+          - name: AlertingClient
+            script: alerting_client.py
+            icon: icon
+            pip: ''
+            extra: ''
+          - name: AlertingPro
+            script: alerting_clientpro.py
+            icon: iconpro
+            pip: pystray
+            extra: '--hidden-import pystray._win32'
+          - name: AdminRouterDiagnostic
+            script: diagnosticapp.py
+            icon: icondiagnostic
+            pip: ''
+            extra: ''
+          - name: AdminRouterDashboard
+            script: dashboardapp.py
+            icon: icondash
+            pip: pywebview
+            extra: '--collect-all webview'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install pyinstaller
-      - name: Build exe
+      - name: Install build tools
+        run: pip install pyinstaller pillow ${{ matrix.pip }}
+      - name: Build ${{ matrix.name }}
         shell: pwsh
         run: |
-          $opts = @('--onefile', '--noconsole', '--name', 'AlertingClient')
-          
-          if (Test-Path 'icon_32x32.ico') {
-            $opts += @('--icon', 'icon_32x32.ico')
-          }
-          
-          pyinstaller @opts alerting_client.py
+          # merge <icon>_16x16/32x32/48x48.ico into one app.ico (falls back to the standard icon)
+          python mergeicons.py ${{ matrix.icon }} app.ico
+          if (-not (Test-Path app.ico)) { python mergeicons.py icon app.ico }
+          $opts = @('--onefile', '--noconsole', '--name', '${{ matrix.name }}')
+          if (Test-Path app.ico) { $opts += @('--icon', 'app.ico', '--add-data', 'app.ico;.') }
+          if ('${{ matrix.extra }}' -ne '') { $opts += '${{ matrix.extra }}'.Split(' ') }
+          pyinstaller @opts ${{ matrix.script }}
       - uses: actions/upload-artifact@v4
         with:
-          name: AlertingClient
-          path: dist/AlertingClient.exe
+          name: ${{ matrix.name }}
+          path: dist/${{ matrix.name }}.exe
+
+  bundle:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: apps
+          merge-multiple: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AllApps
+          path: apps/*.exe
