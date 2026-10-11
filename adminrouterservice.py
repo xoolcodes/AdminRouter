@@ -720,7 +720,7 @@ class Handler(BaseHTTPRequestHandler):
     username = ''
     password_hash = ''
     port = 0
-    public_index = BASE / "public" / "index.html"
+    public_index = BASE / 'public' / 'index.html'
     sessions = set()
 
     def read_json(self, limit):
