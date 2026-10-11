@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+adminrouter_config.sql
+adminrouter_service.py
