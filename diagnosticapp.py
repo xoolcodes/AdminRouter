@@ -6,7 +6,7 @@ import threading
 import time
 import tkinter as tk
 
-from adminrouter_common import (FONT, Card, Field, RoundButton, ScrollFrame, Spinner, apply_window_icon, center_window,
+from sharedUItoolkit import (FONT, Card, Field, RoundButton, ScrollFrame, Spinner, apply_window_icon, center_window,
                                 config_dir, find_server, get_local_ip, http_request, load_json, make_header,
                                 palette, probe_host, save_json, split_address, style_check)
 
@@ -328,7 +328,6 @@ class DiagnosticApp:
     def close(self):
         self.closing = True
         self.root.destroy()
-
 
 if __name__ == '__main__':
     window = tk.Tk()

@@ -11,7 +11,7 @@ import threading
 import time
 import tkinter as tk
 
-from adminrouter_common import (FONT, AlertFeed, AlertPresenter, Card, Field, RoundButton, ScrollFrame, Spinner,
+from sharedUItoolkit import (FONT, AlertFeed, AlertPresenter, Card, Field, RoundButton, ScrollFrame, Spinner,
                                 StatusLine, apply_window_icon, center_window, config_dir, device_name, draw_logo,
                                 find_server, load_client_id, load_json, make_header, palette, resource_path,
                                 save_json, split_address, style_check)
